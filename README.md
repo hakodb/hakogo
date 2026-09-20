@@ -66,3 +66,13 @@ func main() {
 
 - `go vet` reports three pre-existing `unsafe.Pointer` (cgo.Handle
   bridge) advisories; build is clean.
+
+## Examples
+
+`examples/demo` runs CRUD, query, batch, transaction, and graceful
+sync degradation against `third_party/lib` (add it to `PATH` /
+`LD_LIBRARY_PATH` first):
+
+```sh
+go run ./examples/demo
+```
