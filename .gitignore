@@ -1,2 +1,4 @@
 /third_party/lib/*
 !/third_party/lib/.gitkeep
+
+*.db
