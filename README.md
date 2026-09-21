@@ -1,7 +1,7 @@
 # Hako Go SDK (v0.1.1)
 
 A complete Go SDK over the HakoDB C-FFI surface, with a Firestore-style
-ergonomic layer. Module: `github.com/hakodb/hako-go`
+ergonomic layer. Module: `github.com/hakodb/hakogo`
 (package `hako`; module path moves with the repo-creation phase).
 
 ## Features
@@ -46,7 +46,7 @@ package main
 
 import (
   "fmt"
-  hako "github.com/hakodb/hako-go/hako"
+  hako "github.com/hakodb/hakogo/hako"
 )
 
 func main() {
