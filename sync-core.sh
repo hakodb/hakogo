@@ -15,7 +15,7 @@ if [[ "${1:-}" == "--core-dir" ]]; then
     echo "synced from checkout: $CORE"
 elif [[ "${1:-}" == "--tag" ]]; then
     TAG="$2"
-    BASE="https://github.com/rizaptk/firelite/releases/download/$TAG"
+    BASE="https://github.com/hakodb/hakodb/releases/download/$TAG"
     curl -sL -o "$ROOT/third_party/include/hako.h" "$BASE/hako.h"
     curl -sL -o "$ROOT/third_party/lib/libhakodb.so" "$BASE/libhakodb-x86_64-unknown-linux-gnu.so"
     echo "synced from release asset: $TAG"

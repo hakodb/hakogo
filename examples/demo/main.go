@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/firelite-db/firelite-go/hako"
+	"github.com/hakodb/hako-go/hako"
 )
 
 func main() {

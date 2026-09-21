@@ -1,3 +1,3 @@
-module github.com/firelite-db/firelite-go
+module github.com/hakodb/hako-go
 
 go 1.22
