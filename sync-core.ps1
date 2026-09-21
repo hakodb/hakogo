@@ -18,17 +18,15 @@ $Lib = Join-Path $Root "third_party\lib"
 New-Item -ItemType Directory -Force $Inc, $Lib | Out-Null
 
 if ($CoreDir -ne "") {
-    Copy-Item (Join-Path $CoreDir "include\firelite.h") $Inc -Force
-    $dll = Join-Path $CoreDir "target\release\firelite.dll"
+    Copy-Item (Join-Path $CoreDir "include\hako.h") $Inc -Force
+    $dll = Join-Path $CoreDir "target\release\hakodb.dll"
     if (-not (Test-Path $dll)) { throw "no release DLL at $dll (cargo build --release first)" }
     Copy-Item $dll $Lib -Force
     Write-Output "synced from checkout: $CoreDir"
 } elseif ($Tag -ne "") {
-    $zip = Join-Path $env:TEMP "firelite-$Tag-windows.zip"
-    Invoke-WebRequest -Uri "https://github.com/rizaptk/firelite/releases/download/$Tag/firelite-$Tag-x86_64-pc-windows-msvc.zip" -OutFile $zip
-    Expand-Archive -Path $zip -DestinationPath $env:TEMP\firelite-rel -Force
-    Copy-Item $env:TEMP\firelite-rel\firelite.h $Inc -Force
-    Copy-Item $env:TEMP\firelite-rel\firelite.dll $Lib -Force
+    $base = "https://github.com/rizaptk/firelite/releases/download/$Tag"
+    Invoke-WebRequest -Uri "$base/hako.h" -OutFile (Join-Path $Inc "hako.h")
+    Invoke-WebRequest -Uri "$base/hakodb-x86_64-pc-windows-msvc.dll" -OutFile (Join-Path $Lib "hakodb.dll")
     Write-Output "synced from release asset: $Tag"
 } else {
     throw "pass -CoreDir or -Tag"

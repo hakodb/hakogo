@@ -2,29 +2,29 @@ package firelite
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../third_party/include
-#cgo LDFLAGS: -L${SRCDIR}/../third_party/lib -lfirelite
+#cgo LDFLAGS: -L${SRCDIR}/../third_party/lib -lhakodb
 #include <stdlib.h>
 #include <stdint.h>
-#include "firelite.h"
+#include "hako.h"
 
-extern void firelite_watch_bridge(char* collection, char* path, int32_t kind, void* user_data);
-static inline void firelite_watch_bridge_const(const char* collection, const char* path, int32_t kind, void* user_data) {
-	firelite_watch_bridge((char*)collection, (char*)path, kind, user_data);
+extern void hako_watch_bridge(char* collection, char* path, int32_t kind, void* user_data);
+static inline void hako_watch_bridge_const(const char* collection, const char* path, int32_t kind, void* user_data) {
+	hako_watch_bridge((char*)collection, (char*)path, kind, user_data);
 }
-static inline FL_Watch* firelite_watch_bridge_register(FL_Engine* engine, const char* collection, void* user_data) {
-	return fl_engine_watch(engine, collection, firelite_watch_bridge_const, user_data);
+static inline HK_Watch* hako_watch_bridge_register(HK_Engine* engine, const char* collection, void* user_data) {
+	return hk_engine_watch(engine, collection, hako_watch_bridge_const, user_data);
 }
-extern bool fireliteWalkBridge(char* id, uintptr_t id_len, uint8_t* bytes, uintptr_t bytes_len, void* user_data);
-static inline int64_t firelite_walk_register(FL_Engine* engine, const FL_Query* query, void* user_data) {
+extern bool hakoWalkBridge(char* id, uintptr_t id_len, uint8_t* bytes, uintptr_t bytes_len, void* user_data);
+static inline int64_t hako_walk_register(HK_Engine* engine, const HK_Query* query, void* user_data) {
 	// ponytail: the Go bridge takes non-const pointers (cgo has no const);
 	// it never mutates — the cast keeps the public typedef const-correct.
-	return fl_cursor_walk(engine, query, (FlWalkCallback)fireliteWalkBridge, user_data);
+	return hk_cursor_walk(engine, query, (HkWalkCallback)hakoWalkBridge, user_data);
 }
-extern bool fireliteViewWalkBridge(char* id, uintptr_t id_len, FL_ViewDoc* view, void* user_data);
-static inline int64_t firelite_view_walk_register(FL_Engine* engine, const FL_Query* query, void* user_data) {
+extern bool hakoViewWalkBridge(char* id, uintptr_t id_len, HK_ViewDoc* view, void* user_data);
+static inline int64_t hako_view_walk_register(HK_Engine* engine, const HK_Query* query, void* user_data) {
 	// ponytail: same const-cast shaping as the byte walk above; the engine
 	// lends the view for the call, Go must not retain the handle.
-	return fl_cursor_walk_view(engine, query, (FlViewWalkCallback)fireliteViewWalkBridge, user_data);
+	return hk_cursor_walk_view(engine, query, (HkViewWalkCallback)hakoViewWalkBridge, user_data);
 }
 */
 import "C"
@@ -38,21 +38,21 @@ import (
 )
 
 type (
-	Engine      struct{ ptr *C.FL_Engine }
-	Config      struct{ ptr *C.FL_Config }
-	Doc         struct{ ptr *C.FL_Doc }
-	Array       struct{ ptr *C.FL_Array }
-	Query       struct{ ptr *C.FL_Query }
-	Batch       struct{ ptr *C.FL_Batch }
-	Transaction struct{ ptr *C.FL_Transaction }
-	NetSyncer   struct{ ptr *C.FL_NetSyncer }
-	ResultSet   struct{ ptr *C.FL_ResultSet }
-	RawDoc      struct{ ptr *C.FL_RawDoc }
-	RawResultSet struct{ ptr *C.FL_RawResultSet }
-	ViewDoc     struct{ ptr *C.FL_ViewDoc }
-	CloudSync   struct{ ptr *C.FL_CloudSync }
+	Engine      struct{ ptr *C.HK_Engine }
+	Config      struct{ ptr *C.HK_Config }
+	Doc         struct{ ptr *C.HK_Doc }
+	Array       struct{ ptr *C.HK_Array }
+	Query       struct{ ptr *C.HK_Query }
+	Batch       struct{ ptr *C.HK_Batch }
+	Transaction struct{ ptr *C.HK_Transaction }
+	NetSyncer   struct{ ptr *C.HK_NetSyncer }
+	ResultSet   struct{ ptr *C.HK_ResultSet }
+	RawDoc      struct{ ptr *C.HK_RawDoc }
+	RawResultSet struct{ ptr *C.HK_RawResultSet }
+	ViewDoc     struct{ ptr *C.HK_ViewDoc }
+	CloudSync   struct{ ptr *C.HK_CloudSync }
 	Watch       struct {
-		ptr    *C.FL_Watch
+		ptr    *C.HK_Watch
 		handle cgo.Handle
 	}
 )
@@ -92,7 +92,7 @@ type TimestampMicros int64
 type SnapshotCallback func(collection, path string, kind SnapshotKind)
 
 func lastError() string {
-	err := C.fl_last_error()
+	err := C.hk_last_error()
 	if err == nil {
 		return "unknown ffi error"
 	}
@@ -114,9 +114,9 @@ func cString(v string) (*C.char, func()) {
 func Open(path string) (*Engine, error) {
 	cp, free := cString(path)
 	defer free()
-	ptr := C.fl_engine_open(cp)
+	ptr := C.hk_engine_open(cp)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_engine_open failed: %s", lastError())
+		return nil, fmt.Errorf("hk_engine_open failed: %s", lastError())
 	}
 	return &Engine{ptr: ptr}, nil
 }
@@ -127,64 +127,64 @@ func OpenWithConfig(path string, cfg *Config) (*Engine, error) {
 	}
 	cp, free := cString(path)
 	defer free()
-	ptr := C.fl_engine_open_with_config(cp, cfg.ptr)
+	ptr := C.hk_engine_open_with_config(cp, cfg.ptr)
 	cfg.ptr = nil
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_engine_open_with_config failed: %s", lastError())
+		return nil, fmt.Errorf("hk_engine_open_with_config failed: %s", lastError())
 	}
 	return &Engine{ptr: ptr}, nil
 }
 
 func (e *Engine) Close() {
 	if e != nil && e.ptr != nil {
-		C.fl_engine_free(e.ptr)
+		C.hk_engine_free(e.ptr)
 		e.ptr = nil
 	}
 }
 
-func NewConfig() *Config { return &Config{ptr: C.fl_config_new()} }
+func NewConfig() *Config { return &Config{ptr: C.hk_config_new()} }
 func (c *Config) Free() {
 	if c != nil && c.ptr != nil {
-		C.fl_config_free(c.ptr)
+		C.hk_config_free(c.ptr)
 		c.ptr = nil
 	}
 }
 
 func (c *Config) SetDurability(mode DurabilityMode) {
-	C.fl_config_set_durability(c.ptr, C.int32_t(mode))
+	C.hk_config_set_durability(c.ptr, C.int32_t(mode))
 }
 func (c *Config) SetQueryWorkers(count uintptr) {
-	C.fl_config_set_query_workers(c.ptr, C.uintptr_t(count))
+	C.hk_config_set_query_workers(c.ptr, C.uintptr_t(count))
 }
 func (c *Config) SetCompression(enabled bool, level int32) {
-	C.fl_config_set_compression(c.ptr, C.bool(enabled), C.int32_t(level))
+	C.hk_config_set_compression(c.ptr, C.bool(enabled), C.int32_t(level))
 }
 
 // SetBackgroundMaintenance holds the 5s maintenance tick (checkpoint,
 // compaction, purge, snapshots) for deterministic benchmarks or hard
 // latency bounds. Engine stays correct; files grow until re-enabled.
 func (c *Config) SetBackgroundMaintenance(enabled bool) {
-	C.fl_config_set_background_maintenance(c.ptr, C.bool(enabled))
+	C.hk_config_set_background_maintenance(c.ptr, C.bool(enabled))
 }
 
 func (c *Config) SetEncryptionKey(key string) {
 	ck, free := cString(key)
 	defer free()
-	C.fl_config_set_encryption_key(c.ptr, ck)
+	C.hk_config_set_encryption_key(c.ptr, ck)
 }
 
 func (c *Config) SetAuditLog(enabled bool, path string) {
 	cp, free := cString(path)
 	defer free()
-	C.fl_config_set_audit_log(c.ptr, C.bool(enabled), cp)
+	C.hk_config_set_audit_log(c.ptr, C.bool(enabled), cp)
 }
 
 func (c *Config) SetMemoryLimits(mmapSize, maxInlined uintptr) {
-	C.fl_config_set_memory_limits(c.ptr, C.uintptr_t(mmapSize), C.uintptr_t(maxInlined))
+	C.hk_config_set_memory_limits(c.ptr, C.uintptr_t(mmapSize), C.uintptr_t(maxInlined))
 }
 
 func (c *Config) SetStorageTuning(pageSize, compactionThreshold, groupCommitMaxOps uintptr) {
-	C.fl_config_set_storage_tuning(c.ptr, C.uintptr_t(pageSize), C.uintptr_t(compactionThreshold), C.uintptr_t(groupCommitMaxOps))
+	C.hk_config_set_storage_tuning(c.ptr, C.uintptr_t(pageSize), C.uintptr_t(compactionThreshold), C.uintptr_t(groupCommitMaxOps))
 }
 
 // SetEncryptedCollections marks specific collections for at-rest encryption.
@@ -195,32 +195,32 @@ func (c *Config) SetEncryptedCollections(collections ...string) error {
 	}
 	cj, free := cString(string(payload))
 	defer free()
-	return checkStatus("fl_config_set_encrypted_collections", C.fl_config_set_encrypted_collections(c.ptr, cj))
+	return checkStatus("hk_config_set_encrypted_collections", C.hk_config_set_encrypted_collections(c.ptr, cj))
 }
 
 func (c *Config) SetBlobThreshold(thresholdBytes uintptr) {
-	C.fl_config_set_blob_threshold(c.ptr, C.uintptr_t(thresholdBytes))
+	C.hk_config_set_blob_threshold(c.ptr, C.uintptr_t(thresholdBytes))
 }
 
 // SetWALReserveBytes sets the WAL headroom reservation (0 = off).
 func (c *Config) SetWALReserveBytes(bytes uint64) {
-	C.fl_config_set_wal_reserve_bytes(c.ptr, C.uint64_t(bytes))
+	C.hk_config_set_wal_reserve_bytes(c.ptr, C.uint64_t(bytes))
 }
 
-func NewDoc() *Doc { return &Doc{ptr: C.fl_doc_new()} }
+func NewDoc() *Doc { return &Doc{ptr: C.hk_doc_new()} }
 func (d *Doc) Free() {
 	if d != nil && d.ptr != nil {
-		C.fl_doc_free(d.ptr)
+		C.hk_doc_free(d.ptr)
 		d.ptr = nil
 	}
 }
 
 func (d *Doc) ToJSON() (string, error) {
-	ptr := C.fl_doc_to_json(d.ptr)
+	ptr := C.hk_doc_to_json(d.ptr)
 	if ptr == nil {
-		return "", fmt.Errorf("fl_doc_to_json failed: %s", lastError())
+		return "", fmt.Errorf("hk_doc_to_json failed: %s", lastError())
 	}
-	defer C.fl_string_free(ptr)
+	defer C.hk_string_free(ptr)
 	return C.GoString(ptr), nil
 }
 
@@ -229,45 +229,45 @@ func (d *Doc) InsertString(key, value string) error {
 	cv, fv := cString(value)
 	defer fk()
 	defer fv()
-	return checkStatus("fl_doc_insert_str", C.fl_doc_insert_str(d.ptr, ck, cv))
+	return checkStatus("hk_doc_insert_str", C.hk_doc_insert_str(d.ptr, ck, cv))
 }
 func (d *Doc) InsertInt(key string, value int64) error {
 	ck, fk := cString(key)
 	defer fk()
-	return checkStatus("fl_doc_insert_int", C.fl_doc_insert_int(d.ptr, ck, C.int64_t(value)))
+	return checkStatus("hk_doc_insert_int", C.hk_doc_insert_int(d.ptr, ck, C.int64_t(value)))
 }
 func (d *Doc) InsertFloat(key string, value float64) error {
 	ck, fk := cString(key)
 	defer fk()
-	return checkStatus("fl_doc_insert_float", C.fl_doc_insert_float(d.ptr, ck, C.double(value)))
+	return checkStatus("hk_doc_insert_float", C.hk_doc_insert_float(d.ptr, ck, C.double(value)))
 }
 func (d *Doc) InsertBool(key string, value bool) error {
 	ck, fk := cString(key)
 	defer fk()
-	return checkStatus("fl_doc_insert_bool", C.fl_doc_insert_bool(d.ptr, ck, C.bool(value)))
+	return checkStatus("hk_doc_insert_bool", C.hk_doc_insert_bool(d.ptr, ck, C.bool(value)))
 }
 func (d *Doc) InsertNull(key string) error {
 	ck, fk := cString(key)
 	defer fk()
-	return checkStatus("fl_doc_insert_null", C.fl_doc_insert_null(d.ptr, ck))
+	return checkStatus("hk_doc_insert_null", C.hk_doc_insert_null(d.ptr, ck))
 }
 func (d *Doc) InsertTimestamp(key string, micros int64) error {
 	ck, fk := cString(key)
 	defer fk()
-	return checkStatus("fl_doc_insert_timestamp", C.fl_doc_insert_timestamp(d.ptr, ck, C.int64_t(micros)))
+	return checkStatus("hk_doc_insert_timestamp", C.hk_doc_insert_timestamp(d.ptr, ck, C.int64_t(micros)))
 }
 func (d *Doc) InsertServerTimestamp(key string) error {
 	ck, fk := cString(key)
 	defer fk()
-	return checkStatus("fl_doc_insert_server_timestamp", C.fl_doc_insert_server_timestamp(d.ptr, ck))
+	return checkStatus("hk_doc_insert_server_timestamp", C.hk_doc_insert_server_timestamp(d.ptr, ck))
 }
 func (d *Doc) InsertBinary(key string, data []byte) error {
 	ck, fk := cString(key)
 	defer fk()
 	if len(data) == 0 {
-		return checkStatus("fl_doc_insert_bin", C.fl_doc_insert_bin(d.ptr, ck, nil, 0))
+		return checkStatus("hk_doc_insert_bin", C.hk_doc_insert_bin(d.ptr, ck, nil, 0))
 	}
-	return checkStatus("fl_doc_insert_bin", C.fl_doc_insert_bin(d.ptr, ck, (*C.uint8_t)(unsafe.Pointer(&data[0])), C.uintptr_t(len(data))))
+	return checkStatus("hk_doc_insert_bin", C.hk_doc_insert_bin(d.ptr, ck, (*C.uint8_t)(unsafe.Pointer(&data[0])), C.uintptr_t(len(data))))
 }
 func (d *Doc) InsertDoc(key string, child *Doc) error {
 	ck, fk := cString(key)
@@ -275,7 +275,7 @@ func (d *Doc) InsertDoc(key string, child *Doc) error {
 	if child == nil || child.ptr == nil {
 		return errors.New("child doc is nil")
 	}
-	return checkStatus("fl_doc_insert_doc", C.fl_doc_insert_doc(d.ptr, ck, child.ptr))
+	return checkStatus("hk_doc_insert_doc", C.hk_doc_insert_doc(d.ptr, ck, child.ptr))
 }
 func (d *Doc) InsertArray(key string, arr *Array) error {
 	ck, fk := cString(key)
@@ -285,7 +285,7 @@ func (d *Doc) InsertArray(key string, arr *Array) error {
 	}
 	ptr := arr.ptr
 	arr.ptr = nil
-	return checkStatus("fl_doc_insert_array", C.fl_doc_insert_array(d.ptr, ck, ptr))
+	return checkStatus("hk_doc_insert_array", C.hk_doc_insert_array(d.ptr, ck, ptr))
 }
 func (d *Doc) InsertReference(key, targetCollection, targetID string) error {
 	ck, fk := cString(key)
@@ -294,29 +294,29 @@ func (d *Doc) InsertReference(key, targetCollection, targetID string) error {
 	defer fk()
 	defer fc()
 	defer fi()
-	return checkStatus("fl_doc_insert_reference", C.fl_doc_insert_reference(d.ptr, ck, cc, ci))
+	return checkStatus("hk_doc_insert_reference", C.hk_doc_insert_reference(d.ptr, ck, cc, ci))
 }
 
-func NewArray() *Array { return &Array{ptr: C.fl_array_new()} }
+func NewArray() *Array { return &Array{ptr: C.hk_array_new()} }
 func (a *Array) Free() {
 	if a != nil && a.ptr != nil {
-		C.fl_array_free(a.ptr)
+		C.hk_array_free(a.ptr)
 		a.ptr = nil
 	}
 }
 func (a *Array) AppendString(v string) error {
 	cv, free := cString(v)
 	defer free()
-	return checkStatus("fl_array_append_str", C.fl_array_append_str(a.ptr, cv))
+	return checkStatus("hk_array_append_str", C.hk_array_append_str(a.ptr, cv))
 }
 func (a *Array) AppendInt(v int64) error {
-	return checkStatus("fl_array_append_int", C.fl_array_append_int(a.ptr, C.int64_t(v)))
+	return checkStatus("hk_array_append_int", C.hk_array_append_int(a.ptr, C.int64_t(v)))
 }
 func (a *Array) AppendDoc(d *Doc) error {
 	if d == nil || d.ptr == nil {
 		return errors.New("doc is nil")
 	}
-	return checkStatus("fl_array_append_doc", C.fl_array_append_doc(a.ptr, d.ptr))
+	return checkStatus("hk_array_append_doc", C.hk_array_append_doc(a.ptr, d.ptr))
 }
 
 func (e *Engine) Set(collection, docID string, doc *Doc) error {
@@ -324,7 +324,7 @@ func (e *Engine) Set(collection, docID string, doc *Doc) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_engine_insert", C.fl_engine_insert(e.ptr, cc, ci, doc.ptr))
+	return checkStatus("hk_engine_insert", C.hk_engine_insert(e.ptr, cc, ci, doc.ptr))
 }
 
 // InsertTake moves doc into the engine without cloning (no deep copy).
@@ -334,7 +334,7 @@ func (e *Engine) InsertTake(collection, docID string, doc *Doc) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	err := checkStatus("fl_engine_insert_take", C.fl_engine_insert_take(e.ptr, cc, ci, doc.ptr))
+	err := checkStatus("hk_engine_insert_take", C.hk_engine_insert_take(e.ptr, cc, ci, doc.ptr))
 	doc.ptr = nil
 	return err
 }
@@ -343,7 +343,7 @@ func (e *Engine) InsertTake(collection, docID string, doc *Doc) error {
 func (e *Engine) ResolveBlobs(collection string, doc *Doc) error {
 	cc, fc := cString(collection)
 	defer fc()
-	return checkStatus("fl_doc_resolve_blobs", C.fl_doc_resolve_blobs(e.ptr, cc, doc.ptr))
+	return checkStatus("hk_doc_resolve_blobs", C.hk_doc_resolve_blobs(e.ptr, cc, doc.ptr))
 }
 
 func (e *Engine) GetDoc(collection, docID string) (*Doc, error) {
@@ -351,7 +351,7 @@ func (e *Engine) GetDoc(collection, docID string) (*Doc, error) {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	ptr := C.fl_engine_get(e.ptr, cc, ci)
+	ptr := C.hk_engine_get(e.ptr, cc, ci)
 	if ptr == nil {
 		return nil, nil
 	}
@@ -363,7 +363,7 @@ func (e *Engine) Delete(collection, docID string) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_engine_delete", C.fl_engine_delete(e.ptr, cc, ci))
+	return checkStatus("hk_engine_delete", C.hk_engine_delete(e.ptr, cc, ci))
 }
 
 // DeleteLocal marks the key so no sync tailer or handshake ever transmits
@@ -373,7 +373,7 @@ func (e *Engine) DeleteLocal(collection, docID string) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_engine_delete_local", C.fl_engine_delete_local(e.ptr, cc, ci))
+	return checkStatus("hk_engine_delete_local", C.hk_engine_delete_local(e.ptr, cc, ci))
 }
 
 // SetCollectionLocal marks a collection local-only (never syncs) or, with
@@ -385,7 +385,7 @@ func (e *Engine) SetCollectionLocal(collection string, local bool) error {
 	if local {
 		l = 1
 	}
-	return checkStatus("fl_engine_set_collection_local", C.fl_engine_set_collection_local(e.ptr, cc, l))
+	return checkStatus("hk_engine_set_collection_local", C.hk_engine_set_collection_local(e.ptr, cc, l))
 }
 
 // ReplicateKey opts a key back into replication (future ops only).
@@ -394,14 +394,14 @@ func (e *Engine) ReplicateKey(collection, docID string) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_engine_replicate_key", C.fl_engine_replicate_key(e.ptr, cc, ci))
+	return checkStatus("hk_engine_replicate_key", C.hk_engine_replicate_key(e.ptr, cc, ci))
 }
 
 // ReplicateCollection opts a whole collection back into replication.
 func (e *Engine) ReplicateCollection(collection string) error {
 	cc, fc := cString(collection)
 	defer fc()
-	return checkStatus("fl_engine_replicate_collection", C.fl_engine_replicate_collection(e.ptr, cc))
+	return checkStatus("hk_engine_replicate_collection", C.hk_engine_replicate_collection(e.ptr, cc))
 }
 
 // VacuumCollection purges a collection's tombstones. Emits nothing (never
@@ -409,9 +409,9 @@ func (e *Engine) ReplicateCollection(collection string) error {
 func (e *Engine) VacuumCollection(collection string) (int32, error) {
 	cc, fc := cString(collection)
 	defer fc()
-	n := C.fl_engine_vacuum_collection(e.ptr, cc)
+	n := C.hk_engine_vacuum_collection(e.ptr, cc)
 	if n < 0 {
-		return 0, fmt.Errorf("fl_engine_vacuum_collection failed: %s", lastError())
+		return 0, fmt.Errorf("hk_engine_vacuum_collection failed: %s", lastError())
 	}
 	return int32(n), nil
 }
@@ -421,13 +421,13 @@ func (e *Engine) Patch(collection, docID string, updates *Doc) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_engine_patch", C.fl_engine_patch(e.ptr, cc, ci, updates.ptr))
+	return checkStatus("hk_engine_patch", C.hk_engine_patch(e.ptr, cc, ci, updates.ptr))
 }
 
 func (e *Engine) GetByReference(doc *Doc, fieldKey string) (*Doc, error) {
 	ck, fk := cString(fieldKey)
 	defer fk()
-	ptr := C.fl_engine_get_by_ref(e.ptr, doc.ptr, ck)
+	ptr := C.hk_engine_get_by_ref(e.ptr, doc.ptr, ck)
 	if ptr == nil {
 		return nil, nil
 	}
@@ -437,24 +437,24 @@ func (e *Engine) GetByReference(doc *Doc, fieldKey string) (*Doc, error) {
 func (e *Engine) Backup(path string) error {
 	cp, free := cString(path)
 	defer free()
-	return checkStatus("fl_engine_backup", C.fl_engine_backup(e.ptr, cp))
+	return checkStatus("hk_engine_backup", C.hk_engine_backup(e.ptr, cp))
 }
-func (e *Engine) Compact() error { return checkStatus("fl_engine_compact", C.fl_engine_compact(e.ptr)) }
+func (e *Engine) Compact() error { return checkStatus("hk_engine_compact", C.hk_engine_compact(e.ptr)) }
 
 // IsIndexesReady reports whether background index construction has completed.
 func (e *Engine) IsIndexesReady() bool {
-	return bool(C.fl_engine_is_indexes_ready(e.ptr))
+	return bool(C.hk_engine_is_indexes_ready(e.ptr))
 }
 
 // ListIndexes returns the raw JSON index listing for a collection (or all collections when empty).
 func (e *Engine) ListIndexes(collection string) (string, error) {
 	cc, free := cString(collection)
 	defer free()
-	return ownedCStringJSON(func() *C.char { return C.fl_engine_list_indexes(e.ptr, cc) })
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_list_indexes(e.ptr, cc) })
 }
 
 func (e *Engine) ListCollections() ([]string, error) {
-	s, err := ownedCStringJSON(func() *C.char { return C.fl_engine_list_collections(e.ptr) })
+	s, err := ownedCStringJSON(func() *C.char { return C.hk_engine_list_collections(e.ptr) })
 	if err != nil {
 		return nil, err
 	}
@@ -465,10 +465,10 @@ func (e *Engine) ListCollections() ([]string, error) {
 	return cols, nil
 }
 func (e *Engine) StatsJSON() (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.fl_engine_get_stats(e.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_get_stats(e.ptr) })
 }
 func (e *Engine) AuditLogJSON() (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.fl_engine_get_audit_log(e.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_get_audit_log(e.ptr) })
 }
 
 func (e *Engine) NewNetSyncer(name, roomKey string) (*NetSyncer, error) {
@@ -476,15 +476,15 @@ func (e *Engine) NewNetSyncer(name, roomKey string) (*NetSyncer, error) {
 	cr, fr := cString(roomKey)
 	defer fn()
 	defer fr()
-	ptr := C.fl_net_syncer_new(e.ptr, cn, cr)
+	ptr := C.hk_net_syncer_new(e.ptr, cn, cr)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_net_syncer_new failed: %s", lastError())
+		return nil, fmt.Errorf("hk_net_syncer_new failed: %s", lastError())
 	}
 	return &NetSyncer{ptr: ptr}, nil
 }
 
 func (n *NetSyncer) Start(port uint16) error {
-	return checkStatus("fl_net_syncer_start", C.fl_net_syncer_start(n.ptr, C.uint16_t(port)))
+	return checkStatus("hk_net_syncer_start", C.hk_net_syncer_start(n.ptr, C.uint16_t(port)))
 }
 
 // Discovery transports for LAN mesh: 0 = mDNS (desktop default), 1 = UDP
@@ -498,16 +498,16 @@ const (
 
 // SetDiscoveryMode selects discovery transports. Takes effect at Start.
 func (n *NetSyncer) SetDiscoveryMode(mode int) error {
-	return checkStatus("fl_net_syncer_set_discovery", C.fl_net_syncer_set_discovery(n.ptr, C.int(mode)))
+	return checkStatus("hk_net_syncer_set_discovery", C.hk_net_syncer_set_discovery(n.ptr, C.int(mode)))
 }
 
 func (n *NetSyncer) StatusJSON() (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.fl_net_syncer_status(n.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_net_syncer_status(n.ptr) })
 }
 
 func (n *NetSyncer) Free() {
 	if n != nil && n.ptr != nil {
-		C.fl_net_syncer_free(n.ptr)
+		C.hk_net_syncer_free(n.ptr)
 		n.ptr = nil
 	}
 }
@@ -525,9 +525,9 @@ func (e *Engine) NewCloudSync(mode CloudSyncMode, clientID, roomName, roomKey, a
 	defer frn()
 	defer fr()
 	defer ft()
-	ptr := C.fl_cloud_sync_new(e.ptr, C.int32_t(mode), ci, rn, cr, ct)
+	ptr := C.hk_cloud_sync_new(e.ptr, C.int32_t(mode), ci, rn, cr, ct)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_cloud_sync_new failed: %s", lastError())
+		return nil, fmt.Errorf("hk_cloud_sync_new failed: %s", lastError())
 	}
 	return &CloudSync{ptr: ptr}, nil
 }
@@ -541,9 +541,9 @@ func (e *Engine) NewCloudSyncServer(serverID, authToken string) (*CloudSync, err
 	ct, ft := cString(authToken)
 	defer fsi()
 	defer ft()
-	ptr := C.fl_cloud_sync_server_new(e.ptr, si, ct)
+	ptr := C.hk_cloud_sync_server_new(e.ptr, si, ct)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_cloud_sync_server_new failed: %s", lastError())
+		return nil, fmt.Errorf("hk_cloud_sync_server_new failed: %s", lastError())
 	}
 	return &CloudSync{ptr: ptr}, nil
 }
@@ -560,9 +560,9 @@ func (e *Engine) NewCloudSyncClient(clientID, roomName, roomKey, authToken strin
 	defer frn()
 	defer fr()
 	defer ft()
-	ptr := C.fl_cloud_sync_client_new(e.ptr, ci, rn, cr, ct)
+	ptr := C.hk_cloud_sync_client_new(e.ptr, ci, rn, cr, ct)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_cloud_sync_client_new failed: %s", lastError())
+		return nil, fmt.Errorf("hk_cloud_sync_client_new failed: %s", lastError())
 	}
 	return &CloudSync{ptr: ptr}, nil
 }
@@ -571,22 +571,22 @@ func (e *Engine) NewCloudSyncClient(clientID, roomName, roomKey, authToken strin
 func (s *CloudSync) Start(address string) error {
 	ca, free := cString(address)
 	defer free()
-	return checkStatus("fl_cloud_sync_start", C.fl_cloud_sync_start(s.ptr, ca))
+	return checkStatus("hk_cloud_sync_start", C.hk_cloud_sync_start(s.ptr, ca))
 }
 
 func (s *CloudSync) Status() (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.fl_cloud_sync_status(s.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_cloud_sync_status(s.ptr) })
 }
 
 func (s *CloudSync) Stop() {
 	if s != nil && s.ptr != nil {
-		C.fl_cloud_sync_stop(s.ptr)
+		C.hk_cloud_sync_stop(s.ptr)
 	}
 }
 
 func (s *CloudSync) Free() {
 	if s != nil && s.ptr != nil {
-		C.fl_cloud_sync_free(s.ptr)
+		C.hk_cloud_sync_free(s.ptr)
 		s.ptr = nil
 	}
 }
@@ -600,7 +600,7 @@ func (e *Engine) InsertSubDoc(col, id, subCol, subID string, doc *Doc) error {
 	defer fi()
 	defer fs()
 	defer fsi()
-	return checkStatus("fl_engine_insert_subdoc", C.fl_engine_insert_subdoc(e.ptr, cc, ci, cs, csi, doc.ptr))
+	return checkStatus("hk_engine_insert_subdoc", C.hk_engine_insert_subdoc(e.ptr, cc, ci, cs, csi, doc.ptr))
 }
 
 func (e *Engine) CreateIndex(collection string, fieldsJSON string) (uint32, error) {
@@ -608,9 +608,9 @@ func (e *Engine) CreateIndex(collection string, fieldsJSON string) (uint32, erro
 	cj, fj := cString(fieldsJSON)
 	defer fc()
 	defer fj()
-	v := C.fl_engine_create_index(e.ptr, cc, cj)
+	v := C.hk_engine_create_index(e.ptr, cc, cj)
 	if v == 0 {
-		return 0, fmt.Errorf("fl_engine_create_index failed: %s", lastError())
+		return 0, fmt.Errorf("hk_engine_create_index failed: %s", lastError())
 	}
 	return uint32(v), nil
 }
@@ -619,23 +619,23 @@ func (e *Engine) CreateSimpleIndex(collection, field string) error {
 	cf, ff := cString(field)
 	defer fc()
 	defer ff()
-	return checkStatus("fl_engine_create_simple_index", C.fl_engine_create_simple_index(e.ptr, cc, cf))
+	return checkStatus("hk_engine_create_simple_index", C.hk_engine_create_simple_index(e.ptr, cc, cf))
 }
 func (e *Engine) CreateFTSIndex(collection, field string) error {
 	cc, fc := cString(collection)
 	cf, ff := cString(field)
 	defer fc()
 	defer ff()
-	return checkStatus("fl_engine_create_fts_index", C.fl_engine_create_fts_index(e.ptr, cc, cf))
+	return checkStatus("hk_engine_create_fts_index", C.hk_engine_create_fts_index(e.ptr, cc, cf))
 }
 func (e *Engine) SnapshotIndices() error {
-	return checkStatus("fl_engine_snapshot_indices", C.fl_engine_snapshot_indices(e.ptr))
+	return checkStatus("hk_engine_snapshot_indices", C.hk_engine_snapshot_indices(e.ptr))
 }
 
-func NewBatch() *Batch { return &Batch{ptr: C.fl_batch_new()} }
+func NewBatch() *Batch { return &Batch{ptr: C.hk_batch_new()} }
 func (b *Batch) Free() {
 	if b != nil && b.ptr != nil {
-		C.fl_batch_free(b.ptr)
+		C.hk_batch_free(b.ptr)
 		b.ptr = nil
 	}
 }
@@ -644,29 +644,29 @@ func (b *Batch) Set(collection, docID string, doc *Doc) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_batch_set", C.fl_batch_set(b.ptr, cc, ci, doc.ptr))
+	return checkStatus("hk_batch_set", C.hk_batch_set(b.ptr, cc, ci, doc.ptr))
 }
 func (b *Batch) Delete(collection, docID string) error {
 	cc, fc := cString(collection)
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_batch_delete", C.fl_batch_delete(b.ptr, cc, ci))
+	return checkStatus("hk_batch_delete", C.hk_batch_delete(b.ptr, cc, ci))
 }
 func (e *Engine) CommitBatch(batch *Batch) error {
-	return checkStatus("fl_batch_commit", C.fl_batch_commit(e.ptr, batch.ptr))
+	return checkStatus("hk_batch_commit", C.hk_batch_commit(e.ptr, batch.ptr))
 }
 
 func (e *Engine) BeginTransaction() (*Transaction, error) {
-	ptr := C.fl_transaction_begin(e.ptr)
+	ptr := C.hk_transaction_begin(e.ptr)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_transaction_begin failed: %s", lastError())
+		return nil, fmt.Errorf("hk_transaction_begin failed: %s", lastError())
 	}
 	return &Transaction{ptr: ptr}, nil
 }
 func (t *Transaction) Free() {
 	if t != nil && t.ptr != nil {
-		C.fl_transaction_free(t.ptr)
+		C.hk_transaction_free(t.ptr)
 		t.ptr = nil
 	}
 }
@@ -675,7 +675,7 @@ func (e *Engine) TxGet(t *Transaction, collection, docID string) (*Doc, error) {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	ptr := C.fl_transaction_get(e.ptr, t.ptr, cc, ci)
+	ptr := C.hk_transaction_get(e.ptr, t.ptr, cc, ci)
 	if ptr == nil {
 		return nil, nil
 	}
@@ -686,20 +686,20 @@ func (t *Transaction) Set(collection, docID string, doc *Doc) error {
 	ci, fi := cString(docID)
 	defer fc()
 	defer fi()
-	return checkStatus("fl_transaction_set", C.fl_transaction_set(t.ptr, cc, ci, doc.ptr))
+	return checkStatus("hk_transaction_set", C.hk_transaction_set(t.ptr, cc, ci, doc.ptr))
 }
 func (e *Engine) CommitTransaction(t *Transaction) error {
-	return checkStatus("fl_transaction_commit", C.fl_transaction_commit(e.ptr, t.ptr))
+	return checkStatus("hk_transaction_commit", C.hk_transaction_commit(e.ptr, t.ptr))
 }
 
 func NewQuery(collection string) *Query {
 	cc, free := cString(collection)
 	defer free()
-	return &Query{ptr: C.fl_query_new(cc)}
+	return &Query{ptr: C.hk_query_new(cc)}
 }
 func (q *Query) Free() {
 	if q != nil && q.ptr != nil {
-		C.fl_query_free(q.ptr)
+		C.hk_query_free(q.ptr)
 		q.ptr = nil
 	}
 }
@@ -708,161 +708,161 @@ func (q *Query) WhereEqString(field, value string) error {
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_eq_str", C.fl_query_where_eq_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_eq_str", C.hk_query_where_eq_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereEqBool(field string, value bool) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_eq_bool", C.fl_query_where_eq_bool(q.ptr, cf, C.bool(value)))
+	return checkStatus("hk_query_where_eq_bool", C.hk_query_where_eq_bool(q.ptr, cf, C.bool(value)))
 }
 func (q *Query) WhereEqInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_eq_int", C.fl_query_where_eq_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_eq_int", C.hk_query_where_eq_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereNeString(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_ne_str", C.fl_query_where_ne_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_ne_str", C.hk_query_where_ne_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereNeInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_ne_int", C.fl_query_where_ne_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_ne_int", C.hk_query_where_ne_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereGtString(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_gt_str", C.fl_query_where_gt_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_gt_str", C.hk_query_where_gt_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereGtInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_gt_int", C.fl_query_where_gt_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_gt_int", C.hk_query_where_gt_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereGteString(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_gte_str", C.fl_query_where_gte_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_gte_str", C.hk_query_where_gte_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereGteInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_gte_int", C.fl_query_where_gte_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_gte_int", C.hk_query_where_gte_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereLtString(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_lt_str", C.fl_query_where_lt_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_lt_str", C.hk_query_where_lt_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereLtInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_lt_int", C.fl_query_where_lt_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_lt_int", C.hk_query_where_lt_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereLteString(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_lte_str", C.fl_query_where_lte_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_lte_str", C.hk_query_where_lte_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereLteInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_lte_int", C.fl_query_where_lte_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_lte_int", C.hk_query_where_lte_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereOrString(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_or_str", C.fl_query_where_or_str(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_or_str", C.hk_query_where_or_str(q.ptr, cf, cv))
 }
 func (q *Query) WhereOrInt(field string, value int64) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_where_or_int", C.fl_query_where_or_int(q.ptr, cf, C.int64_t(value)))
+	return checkStatus("hk_query_where_or_int", C.hk_query_where_or_int(q.ptr, cf, C.int64_t(value)))
 }
 func (q *Query) WhereIn(field string, arr *Array) error {
 	cf, ff := cString(field)
 	defer ff()
 	ptr := arr.ptr
 	arr.ptr = nil
-	return checkStatus("fl_query_where_in", C.fl_query_where_in(q.ptr, cf, ptr))
+	return checkStatus("hk_query_where_in", C.hk_query_where_in(q.ptr, cf, ptr))
 }
 func (q *Query) WhereNotIn(field string, arr *Array) error {
 	cf, ff := cString(field)
 	defer ff()
 	ptr := arr.ptr
 	arr.ptr = nil
-	return checkStatus("fl_query_where_not_in", C.fl_query_where_not_in(q.ptr, cf, ptr))
+	return checkStatus("hk_query_where_not_in", C.hk_query_where_not_in(q.ptr, cf, ptr))
 }
 func (q *Query) WhereArrayContainsAny(field string, arr *Array) error {
 	cf, ff := cString(field)
 	defer ff()
 	ptr := arr.ptr
 	arr.ptr = nil
-	return checkStatus("fl_query_where_array_contains_any", C.fl_query_where_array_contains_any(q.ptr, cf, ptr))
+	return checkStatus("hk_query_where_array_contains_any", C.hk_query_where_array_contains_any(q.ptr, cf, ptr))
 }
 func (q *Query) WhereArrayContains(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_array_contains", C.fl_query_where_array_contains(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_array_contains", C.hk_query_where_array_contains(q.ptr, cf, cv))
 }
 func (q *Query) WhereMatch(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_match", C.fl_query_where_match(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_match", C.hk_query_where_match(q.ptr, cf, cv))
 }
 func (q *Query) WhereMatchPrefix(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_match_prefix", C.fl_query_where_match_prefix(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_match_prefix", C.hk_query_where_match_prefix(q.ptr, cf, cv))
 }
 func (q *Query) WhereContains(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_contains", C.fl_query_where_contains(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_contains", C.hk_query_where_contains(q.ptr, cf, cv))
 }
 func (q *Query) WhereStartsWith(field, value string) error {
 	cf, ff := cString(field)
 	cv, fv := cString(value)
 	defer ff()
 	defer fv()
-	return checkStatus("fl_query_where_starts_with", C.fl_query_where_starts_with(q.ptr, cf, cv))
+	return checkStatus("hk_query_where_starts_with", C.hk_query_where_starts_with(q.ptr, cf, cv))
 }
 func (q *Query) OrderBy(field string, ascending bool) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_order_by", C.fl_query_order_by(q.ptr, cf, C.bool(ascending)))
+	return checkStatus("hk_query_order_by", C.hk_query_order_by(q.ptr, cf, C.bool(ascending)))
 }
 func (q *Query) Limit(v uintptr) error {
-	return checkStatus("fl_query_limit", C.fl_query_limit(q.ptr, C.uintptr_t(v)))
+	return checkStatus("hk_query_limit", C.hk_query_limit(q.ptr, C.uintptr_t(v)))
 }
 func (q *Query) Offset(v uintptr) error {
-	return checkStatus("fl_query_offset", C.fl_query_offset(q.ptr, C.uintptr_t(v)))
+	return checkStatus("hk_query_offset", C.hk_query_offset(q.ptr, C.uintptr_t(v)))
 }
 func (q *Query) SelectField(field string) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_select_field", C.fl_query_select_field(q.ptr, cf))
+	return checkStatus("hk_query_select_field", C.hk_query_select_field(q.ptr, cf))
 }
 
 // DeferBlobs returns blob-backed fields as placeholders (no blob reads).
@@ -871,46 +871,46 @@ func (q *Query) DeferBlobs(deferBlobs bool) error {
 	if deferBlobs {
 		d = 1
 	}
-	return checkStatus("fl_query_defer_blobs", C.fl_query_defer_blobs(q.ptr, d))
+	return checkStatus("hk_query_defer_blobs", C.hk_query_defer_blobs(q.ptr, d))
 }
 func (q *Query) StartAfter(anchor *Doc) error {
-	return checkStatus("fl_query_start_after", C.fl_query_start_after(q.ptr, anchor.ptr))
+	return checkStatus("hk_query_start_after", C.hk_query_start_after(q.ptr, anchor.ptr))
 }
 func (q *Query) StartAt(anchor *Doc) error {
-	return checkStatus("fl_query_start_at", C.fl_query_start_at(q.ptr, anchor.ptr))
+	return checkStatus("hk_query_start_at", C.hk_query_start_at(q.ptr, anchor.ptr))
 }
 func (q *Query) EndAt(anchor *Doc) error {
-	return checkStatus("fl_query_end_at", C.fl_query_end_at(q.ptr, anchor.ptr))
+	return checkStatus("hk_query_end_at", C.hk_query_end_at(q.ptr, anchor.ptr))
 }
 func (q *Query) EndBefore(anchor *Doc) error {
-	return checkStatus("fl_query_end_before", C.fl_query_end_before(q.ptr, anchor.ptr))
+	return checkStatus("hk_query_end_before", C.hk_query_end_before(q.ptr, anchor.ptr))
 }
 func (q *Query) AggregateCount() error {
-	return checkStatus("fl_query_aggregate_count", C.fl_query_aggregate_count(q.ptr))
+	return checkStatus("hk_query_aggregate_count", C.hk_query_aggregate_count(q.ptr))
 }
 func (q *Query) AggregateSum(field string) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_aggregate_sum", C.fl_query_aggregate_sum(q.ptr, cf))
+	return checkStatus("hk_query_aggregate_sum", C.hk_query_aggregate_sum(q.ptr, cf))
 }
 func (q *Query) AggregateAvg(field string) error {
 	cf, ff := cString(field)
 	defer ff()
-	return checkStatus("fl_query_aggregate_avg", C.fl_query_aggregate_avg(q.ptr, cf))
+	return checkStatus("hk_query_aggregate_avg", C.hk_query_aggregate_avg(q.ptr, cf))
 }
 func (e *Engine) ExecuteQuery(q *Query) (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.fl_query_execute(e.ptr, q.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_query_execute(e.ptr, q.ptr) })
 }
 func (e *Engine) ExecuteAggregation(q *Query) (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.fl_query_execute_aggregation(e.ptr, q.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_query_execute_aggregation(e.ptr, q.ptr) })
 }
 
 // Delete executes the query and deletes all matching documents.
 // Returns the number of deleted documents.
 func (e *Engine) DeleteWhere(q *Query) (int32, error) {
-	n := C.fl_query_delete(e.ptr, q.ptr)
+	n := C.hk_query_delete(e.ptr, q.ptr)
 	if n < 0 {
-		return 0, fmt.Errorf("fl_query_delete failed: %s", lastError())
+		return 0, fmt.Errorf("hk_query_delete failed: %s", lastError())
 	}
 	return int32(n), nil
 }
@@ -918,9 +918,9 @@ func (e *Engine) DeleteWhere(q *Query) (int32, error) {
 // DeleteWhereLocal marks every match so the wipe never leaves this device,
 // then deletes. Returns the number of deleted documents.
 func (e *Engine) DeleteWhereLocal(q *Query) (int32, error) {
-	n := C.fl_query_delete_local(e.ptr, q.ptr)
+	n := C.hk_query_delete_local(e.ptr, q.ptr)
 	if n < 0 {
-		return 0, fmt.Errorf("fl_query_delete_local failed: %s", lastError())
+		return 0, fmt.Errorf("hk_query_delete_local failed: %s", lastError())
 	}
 	return int32(n), nil
 }
@@ -931,9 +931,9 @@ func (e *Engine) PatchWhere(q *Query, updates *Doc) (int32, error) {
 	if updates == nil || updates.ptr == nil {
 		return 0, errors.New("patch doc is nil")
 	}
-	n := C.fl_query_patch(e.ptr, q.ptr, updates.ptr)
+	n := C.hk_query_patch(e.ptr, q.ptr, updates.ptr)
 	if n < 0 {
-		return 0, fmt.Errorf("fl_query_patch failed: %s", lastError())
+		return 0, fmt.Errorf("hk_query_patch failed: %s", lastError())
 	}
 	return int32(n), nil
 }
@@ -941,9 +941,9 @@ func (e *Engine) PatchWhere(q *Query, updates *Doc) (int32, error) {
 // ExecuteQueryToHandles runs the query and returns the result as native doc handles,
 // avoiding the JSON serialization round-trip.
 func (e *Engine) ExecuteQueryToHandles(q *Query) (*ResultSet, error) {
-	ptr := C.fl_query_execute_to_handles(e.ptr, q.ptr)
+	ptr := C.hk_query_execute_to_handles(e.ptr, q.ptr)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_query_execute_to_handles failed: %s", lastError())
+		return nil, fmt.Errorf("hk_query_execute_to_handles failed: %s", lastError())
 	}
 	return &ResultSet{ptr: ptr}, nil
 }
@@ -952,7 +952,7 @@ func (r *ResultSet) Count() uintptr {
 	if r == nil || r.ptr == nil {
 		return 0
 	}
-	return uintptr(C.fl_result_set_count(r.ptr))
+	return uintptr(C.hk_result_set_count(r.ptr))
 }
 
 // GetDoc returns the doc handle at the given index. The returned Doc is owned by the
@@ -961,7 +961,7 @@ func (r *ResultSet) GetDoc(index uintptr) (*Doc, error) {
 	if r == nil || r.ptr == nil {
 		return nil, errors.New("result set is nil")
 	}
-	ptr := C.fl_result_set_get_doc(r.ptr, C.uintptr_t(index))
+	ptr := C.hk_result_set_get_doc(r.ptr, C.uintptr_t(index))
 	if ptr == nil {
 		return nil, nil
 	}
@@ -970,7 +970,7 @@ func (r *ResultSet) GetDoc(index uintptr) (*Doc, error) {
 
 func (r *ResultSet) Free() {
 	if r != nil && r.ptr != nil {
-		C.fl_result_set_free(r.ptr)
+		C.hk_result_set_free(r.ptr)
 		r.ptr = nil
 	}
 }
@@ -981,11 +981,11 @@ func (r *ResultSet) ToJSON() (string, error) {
 	if r == nil || r.ptr == nil {
 		return "", errors.New("result set is nil")
 	}
-	ptr := C.fl_result_set_to_json(r.ptr)
+	ptr := C.hk_result_set_to_json(r.ptr)
 	if ptr == nil {
-		return "", fmt.Errorf("fl_result_set_to_json failed: %s", lastError())
+		return "", fmt.Errorf("hk_result_set_to_json failed: %s", lastError())
 	}
-	defer C.fl_string_free(ptr)
+	defer C.hk_string_free(ptr)
 	return C.GoString(ptr), nil
 }
 
@@ -993,9 +993,9 @@ func (r *ResultSet) ToJSON() (string, error) {
 // instead of decoded docs (v0.8.3+). Bytes are opaque storage encoding:
 // hash, count, export, or resolve them with RawDoc.ToDoc.
 func (e *Engine) ExecuteQueryRaw(q *Query) (*RawResultSet, error) {
-	ptr := C.fl_query_execute_raw(e.ptr, q.ptr)
+	ptr := C.hk_query_execute_raw(e.ptr, q.ptr)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_query_execute_raw failed: %s", lastError())
+		return nil, fmt.Errorf("hk_query_execute_raw failed: %s", lastError())
 	}
 	return &RawResultSet{ptr: ptr}, nil
 }
@@ -1004,7 +1004,7 @@ func (r *RawResultSet) Count() uintptr {
 	if r == nil || r.ptr == nil {
 		return 0
 	}
-	return uintptr(C.fl_rawresult_count(r.ptr))
+	return uintptr(C.hk_rawresult_count(r.ptr))
 }
 
 // GetRawDoc returns the raw row at the given index. Borrowed by the
@@ -1013,7 +1013,7 @@ func (r *RawResultSet) GetRawDoc(index uintptr) (*RawDoc, error) {
 	if r == nil || r.ptr == nil {
 		return nil, errors.New("raw result set is nil")
 	}
-	ptr := C.fl_rawresult_get(r.ptr, C.uintptr_t(index))
+	ptr := C.hk_rawresult_get(r.ptr, C.uintptr_t(index))
 	if ptr == nil {
 		return nil, nil
 	}
@@ -1022,7 +1022,7 @@ func (r *RawResultSet) GetRawDoc(index uintptr) (*RawDoc, error) {
 
 func (r *RawResultSet) Free() {
 	if r != nil && r.ptr != nil {
-		C.fl_rawresult_free(r.ptr)
+		C.hk_rawresult_free(r.ptr)
 		r.ptr = nil
 	}
 }
@@ -1033,9 +1033,9 @@ func (d *RawDoc) ID() (string, error) {
 		return "", errors.New("raw doc is nil")
 	}
 	var ln C.uintptr_t
-	ptr := C.fl_rawdoc_id(d.ptr, &ln)
+	ptr := C.hk_rawdoc_id(d.ptr, &ln)
 	if ptr == nil {
-		return "", fmt.Errorf("fl_rawdoc_id failed: %s", lastError())
+		return "", fmt.Errorf("hk_rawdoc_id failed: %s", lastError())
 	}
 	return C.GoStringN(ptr, C.int(ln)), nil
 }
@@ -1046,25 +1046,25 @@ func (d *RawDoc) Bytes() ([]byte, error) {
 		return nil, errors.New("raw doc is nil")
 	}
 	var ln C.uintptr_t
-	ptr := C.fl_rawdoc_bytes(d.ptr, &ln)
+	ptr := C.hk_rawdoc_bytes(d.ptr, &ln)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_rawdoc_bytes failed: %s", lastError())
+		return nil, fmt.Errorf("hk_rawdoc_bytes failed: %s", lastError())
 	}
 	return C.GoBytes(unsafe.Pointer(ptr), C.int(ln)), nil
 }
 
 // StartAfterRaw binds the next page's cursor from a raw row (no decode).
 func (q *Query) StartAfterRaw(anchor *RawDoc) error {
-	return checkStatus("fl_query_start_after_raw", C.fl_query_start_after_raw(q.ptr, anchor.ptr))
+	return checkStatus("hk_query_start_after_raw", C.hk_query_start_after_raw(q.ptr, anchor.ptr))
 }
 
 // ToDoc resolves a raw row into a decoded Doc (blobs inflated).
 func (d *RawDoc) ToDoc(e *Engine, collection string) (*Doc, error) {
 	cc, free := cString(collection)
 	defer free()
-	ptr := C.fl_rawdoc_to_doc(e.ptr, d.ptr, cc)
+	ptr := C.hk_rawdoc_to_doc(e.ptr, d.ptr, cc)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_rawdoc_to_doc failed: %s", lastError())
+		return nil, fmt.Errorf("hk_rawdoc_to_doc failed: %s", lastError())
 	}
 	return &Doc{ptr: ptr}, nil
 }
@@ -1073,8 +1073,8 @@ func (d *RawDoc) ToDoc(e *Engine, collection string) (*Doc, error) {
 // false to stop early. Bytes are only valid for the call duration.
 type WalkCallback func(id string, bytes []byte) bool
 
-//export fireliteWalkBridge
-func fireliteWalkBridge(id *C.char, idLen C.uintptr_t, bytes *C.uint8_t, bytesLen C.uintptr_t, userData unsafe.Pointer) C.bool {
+//export hakoWalkBridge
+func hakoWalkBridge(id *C.char, idLen C.uintptr_t, bytes *C.uint8_t, bytesLen C.uintptr_t, userData unsafe.Pointer) C.bool {
 	h := cgo.Handle(userData)
 	cb, ok := h.Value().(WalkCallback)
 	if !ok {
@@ -1091,9 +1091,9 @@ func (e *Engine) CursorWalk(q *Query, callback WalkCallback) (int64, error) {
 	}
 	h := cgo.NewHandle(callback)
 	defer h.Delete()
-	n := C.firelite_walk_register(e.ptr, q.ptr, unsafe.Pointer(h))
+	n := C.hako_walk_register(e.ptr, q.ptr, unsafe.Pointer(h))
 	if n < 0 {
-		return -1, fmt.Errorf("fl_cursor_walk failed: %s", lastError())
+		return -1, fmt.Errorf("hk_cursor_walk failed: %s", lastError())
 	}
 	return int64(n), nil
 }
@@ -1105,7 +1105,7 @@ func (e *Engine) GetView(collection, docID string) (*ViewDoc, error) {
 	defer freeC()
 	ci, freeI := cString(docID)
 	defer freeI()
-	ptr := C.fl_view_get(e.ptr, cc, ci)
+	ptr := C.hk_view_get(e.ptr, cc, ci)
 	if ptr == nil {
 		return nil, nil
 	}
@@ -1114,7 +1114,7 @@ func (e *Engine) GetView(collection, docID string) (*ViewDoc, error) {
 
 func (d *ViewDoc) Free() {
 	if d != nil && d.ptr != nil {
-		C.fl_view_free(d.ptr)
+		C.hk_view_free(d.ptr)
 		d.ptr = nil
 	}
 }
@@ -1123,7 +1123,7 @@ func (d *ViewDoc) FieldCount() uintptr {
 	if d == nil || d.ptr == nil {
 		return 0
 	}
-	return uintptr(C.fl_view_field_count(d.ptr))
+	return uintptr(C.hk_view_field_count(d.ptr))
 }
 
 func (d *ViewDoc) HasField(key string) bool {
@@ -1132,7 +1132,7 @@ func (d *ViewDoc) HasField(key string) bool {
 	}
 	ck, free := cString(key)
 	defer free()
-	return bool(C.fl_view_has_field(d.ptr, ck))
+	return bool(C.hk_view_has_field(d.ptr, ck))
 }
 
 func (d *ViewDoc) GetInt(key string) (int64, bool) {
@@ -1142,7 +1142,7 @@ func (d *ViewDoc) GetInt(key string) (int64, bool) {
 	ck, free := cString(key)
 	defer free()
 	var out C.int64_t
-	if !bool(C.fl_view_get_int(d.ptr, ck, &out)) {
+	if !bool(C.hk_view_get_int(d.ptr, ck, &out)) {
 		return 0, false
 	}
 	return int64(out), true
@@ -1155,7 +1155,7 @@ func (d *ViewDoc) GetFloat(key string) (float64, bool) {
 	ck, free := cString(key)
 	defer free()
 	var out C.double
-	if !bool(C.fl_view_get_float(d.ptr, ck, &out)) {
+	if !bool(C.hk_view_get_float(d.ptr, ck, &out)) {
 		return 0, false
 	}
 	return float64(out), true
@@ -1168,7 +1168,7 @@ func (d *ViewDoc) GetBool(key string) (bool, bool) {
 	}
 	ck, free := cString(key)
 	defer free()
-	switch v := C.fl_view_get_bool(d.ptr, ck); v {
+	switch v := C.hk_view_get_bool(d.ptr, ck); v {
 	case 1:
 		return true, true
 	case 0:
@@ -1186,7 +1186,7 @@ func (d *ViewDoc) GetString(key string) (string, bool) {
 	ck, free := cString(key)
 	defer free()
 	var ln C.uintptr_t
-	ptr := C.fl_view_get_str(d.ptr, ck, &ln)
+	ptr := C.hk_view_get_str(d.ptr, ck, &ln)
 	if ptr == nil {
 		return "", false
 	}
@@ -1201,7 +1201,7 @@ func (d *ViewDoc) GetBytes(key string) ([]byte, bool) {
 	ck, free := cString(key)
 	defer free()
 	var ln C.uintptr_t
-	ptr := C.fl_view_get_bytes(d.ptr, ck, &ln)
+	ptr := C.hk_view_get_bytes(d.ptr, ck, &ln)
 	if ptr == nil {
 		return nil, false
 	}
@@ -1215,9 +1215,9 @@ func (d *ViewDoc) ToDoc(docID string) (*Doc, error) {
 	}
 	ci, free := cString(docID)
 	defer free()
-	ptr := C.fl_view_to_doc(d.ptr, ci)
+	ptr := C.hk_view_to_doc(d.ptr, ci)
 	if ptr == nil {
-		return nil, fmt.Errorf("fl_view_to_doc failed: %s", lastError())
+		return nil, fmt.Errorf("hk_view_to_doc failed: %s", lastError())
 	}
 	return &Doc{ptr: ptr}, nil
 }
@@ -1226,8 +1226,8 @@ func (d *ViewDoc) ToDoc(docID string) (*Doc, error) {
 // (valid for the call only); return false to stop early.
 type ViewWalkCallback func(id string, view *ViewDoc) bool
 
-//export fireliteViewWalkBridge
-func fireliteViewWalkBridge(id *C.char, idLen C.uintptr_t, view *C.FL_ViewDoc, userData unsafe.Pointer) C.bool {
+//export hakoViewWalkBridge
+func hakoViewWalkBridge(id *C.char, idLen C.uintptr_t, view *C.HK_ViewDoc, userData unsafe.Pointer) C.bool {
 	h := cgo.Handle(userData)
 	cb, ok := h.Value().(ViewWalkCallback)
 	if !ok {
@@ -1244,9 +1244,9 @@ func (e *Engine) CursorWalkView(q *Query, callback ViewWalkCallback) (int64, err
 	}
 	h := cgo.NewHandle(callback)
 	defer h.Delete()
-	n := C.firelite_view_walk_register(e.ptr, q.ptr, unsafe.Pointer(h))
+	n := C.hako_view_walk_register(e.ptr, q.ptr, unsafe.Pointer(h))
 	if n < 0 {
-		return -1, fmt.Errorf("fl_cursor_walk_view failed: %s", lastError())
+		return -1, fmt.Errorf("hk_cursor_walk_view failed: %s", lastError())
 	}
 	return int64(n), nil
 }
@@ -1256,12 +1256,12 @@ func ownedCStringJSON(fn func() *C.char) (string, error) {
 	if ptr == nil {
 		return "", errors.New(lastError())
 	}
-	defer C.fl_string_free(ptr)
+	defer C.hk_string_free(ptr)
 	return C.GoString(ptr), nil
 }
 
-//export firelite_watch_bridge
-func firelite_watch_bridge(collection *C.char, path *C.char, kind C.int32_t, userData unsafe.Pointer) {
+//export hako_watch_bridge
+func hako_watch_bridge(collection *C.char, path *C.char, kind C.int32_t, userData unsafe.Pointer) {
 	h := cgo.Handle(userData)
 	cb, ok := h.Value().(SnapshotCallback)
 	if !ok {
@@ -1274,10 +1274,10 @@ func (e *Engine) Watch(collection string, callback SnapshotCallback) (*Watch, er
 	cc, free := cString(collection)
 	defer free()
 	h := cgo.NewHandle(callback)
-	ptr := C.firelite_watch_bridge_register(e.ptr, cc, unsafe.Pointer(h))
+	ptr := C.hako_watch_bridge_register(e.ptr, cc, unsafe.Pointer(h))
 	if ptr == nil {
 		h.Delete()
-		return nil, fmt.Errorf("fl_engine_watch failed: %s", lastError())
+		return nil, fmt.Errorf("hk_engine_watch failed: %s", lastError())
 	}
 	return &Watch{ptr: ptr, handle: h}, nil
 }
@@ -1287,7 +1287,7 @@ func (w *Watch) Close() {
 		return
 	}
 	if w.ptr != nil {
-		C.fl_watch_free(w.ptr)
+		C.hk_watch_free(w.ptr)
 		w.ptr = nil
 	}
 	if w.handle != 0 {
