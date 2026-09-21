@@ -8,7 +8,7 @@ mkdir -p "$ROOT/third_party/include" "$ROOT/third_party/lib"
 
 if [[ "${1:-}" == "--core-dir" ]]; then
     CORE="$2"
-    cp "$CORE/include/hako.h" "$ROOT/third_party/include/"
+    cp "$CORE/include/hakodb.h" "$ROOT/third_party/include/"
     SO="$CORE/target/release/libhakodb.so"
     [[ -f "$SO" ]] || { echo "no release .so at $SO (cargo build --release first)" >&2; exit 1; }
     cp "$SO" "$ROOT/third_party/lib/"
@@ -16,7 +16,7 @@ if [[ "${1:-}" == "--core-dir" ]]; then
 elif [[ "${1:-}" == "--tag" ]]; then
     TAG="$2"
     BASE="https://github.com/hakodb/hakodb/releases/download/$TAG"
-    curl -sL -o "$ROOT/third_party/include/hako.h" "$BASE/hako.h"
+    curl -sL -o "$ROOT/third_party/include/hakodb.h" "$BASE/hako.h"
     curl -sL -o "$ROOT/third_party/lib/libhakodb.so" "$BASE/libhakodb-x86_64-unknown-linux-gnu.so"
     echo "synced from release asset: $TAG"
 else

@@ -18,7 +18,7 @@ $Lib = Join-Path $Root "third_party\lib"
 New-Item -ItemType Directory -Force $Inc, $Lib | Out-Null
 
 if ($CoreDir -ne "") {
-    Copy-Item (Join-Path $CoreDir "include\hako.h") $Inc -Force
+    Copy-Item (Join-Path $CoreDir "include\hakodb.h") $Inc -Force
     $dll = Join-Path $CoreDir "target\release\hakodb.dll"
     if (-not (Test-Path $dll)) { throw "no release DLL at $dll (cargo build --release first)" }
     Copy-Item $dll $Lib -Force

@@ -24,7 +24,7 @@ ergonomic layer. Module: `github.com/hakodb/hakogo`
 ## Setup — native library
 
 The SDK links the HakoDB cdylib via cgo. Populate `third_party/`
-(canonical `hako.h` + platform binary) with the sync script:
+(canonical `hakodb.h` + platform binary) with the sync script:
 
 ```powershell
 .\sync-core.ps1 -CoreDir C:\Dev\libs\firelite   # local checkout

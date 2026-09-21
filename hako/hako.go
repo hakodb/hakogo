@@ -5,7 +5,7 @@ package hako
 #cgo LDFLAGS: -L${SRCDIR}/../third_party/lib -lhakodb
 #include <stdlib.h>
 #include <stdint.h>
-#include "hako.h"
+#include "hakodb.h"
 
 extern void hako_watch_bridge(char* collection, char* path, int32_t kind, void* user_data);
 static inline void hako_watch_bridge_const(const char* collection, const char* path, int32_t kind, void* user_data) {
