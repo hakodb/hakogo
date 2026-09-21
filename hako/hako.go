@@ -1,4 +1,4 @@
-package firelite
+package hako
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../third_party/include

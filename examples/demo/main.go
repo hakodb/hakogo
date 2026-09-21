@@ -1,4 +1,4 @@
-// FireLite embedded document database - Go example.
+// HakoDB embedded document database - Go example.
 //
 // The SDK links the shared library at build time (see ../.. sync-core
 // scripts for populating third_party/). The SDK references the net/cloud
@@ -11,7 +11,7 @@
 //   cd examples/demo
 //   go run .
 //
-// At runtime firelite.dll must sit next to the binary (or on PATH);
+// At runtime hako.dll must sit next to the binary (or on PATH);
 // on Linux/macOS use LD_LIBRARY_PATH / DYLD_LIBRARY_PATH.
 package main
 
@@ -19,18 +19,18 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/firelite-db/firelite-go/firelite"
+	"github.com/firelite-db/firelite-go/hako"
 )
 
 func main() {
-	engine, err := firelite.Open("demo.db")
+	engine, err := hako.Open("demo.db")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer engine.Close()
 
 	// ---- Insert a document ----
-	alice := firelite.NewDoc()
+	alice := hako.NewDoc()
 	alice.InsertString("name", "Alice")
 	alice.InsertInt("age", 32)
 	alice.InsertBool("active", true)
@@ -50,7 +50,7 @@ func main() {
 	doc.Free()
 
 	// ---- Query ----
-	q := firelite.NewQuery("users")
+	q := hako.NewQuery("users")
 	if err := q.WhereEqInt("age", 32); err != nil {
 		log.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func main() {
 	q.Free()
 
 	// ---- Atomic batch ----
-	batch := firelite.NewBatch()
-	bob := firelite.NewDoc()
+	batch := hako.NewBatch()
+	bob := hako.NewDoc()
 	bob.InsertString("name", "Bob")
 	bob.InsertInt("age", 27)
 	batch.Set("users", "u2", bob)
@@ -99,7 +99,7 @@ func main() {
 	// ---- NetSync (LAN replication) ----
 	// Requires the DLL/so built with --features net-sync AND a Tokio host
 	// runtime on the calling thread. From plain cgo there is none, so this
-	// degrades gracefully; use firelite-cli serve --net-sync (or an embedded
+	// degrades gracefully; use hako-cli serve --net-sync (or an embedded
 	// Rust tokio app) for a fully working LAN mesh.
 	syncer, err := engine.NewNetSyncer("demo-room", "secret-key")
 	if err != nil {
