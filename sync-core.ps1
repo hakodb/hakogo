@@ -25,7 +25,7 @@ if ($CoreDir -ne "") {
     Write-Output "synced from checkout: $CoreDir"
 } elseif ($Tag -ne "") {
     $base = "https://github.com/hakodb/hakodb/releases/download/$Tag"
-    Invoke-WebRequest -Uri "$base/hako.h" -OutFile (Join-Path $Inc "hako.h")
+    Invoke-WebRequest -Uri "$base/hakodb.h" -OutFile (Join-Path $Inc "hakodb.h")
     Invoke-WebRequest -Uri "$base/hakodb-x86_64-pc-windows-msvc.dll" -OutFile (Join-Path $Lib "hakodb.dll")
     Write-Output "synced from release asset: $Tag"
 } else {
