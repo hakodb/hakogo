@@ -46,6 +46,8 @@ typedef struct HK_RawResultSet HK_RawResultSet;
 
 typedef struct HK_ResultSet HK_ResultSet;
 
+typedef struct HK_SocketSync HK_SocketSync;
+
 typedef struct HK_Transaction HK_Transaction;
 
 typedef struct HK_ViewDoc HK_ViewDoc;
@@ -566,7 +568,7 @@ int32_t hk_query_where_or_str(struct HK_Query *query, const char *field, const c
 int32_t hk_query_where_or_int(struct HK_Query *query, const char *field, int64_t value);
 
 /**
- * Adds an IN filter: field IN [array_items]
+ * Adds an IN filter: field IN `[array_items]`
  * This takes ownership of the HK_Array and frees it.
  */
 int32_t hk_query_where_in(struct HK_Query *query, const char *field, struct HK_Array *array);
@@ -599,6 +601,16 @@ int32_t hk_net_syncer_start(struct HK_NetSyncer *syncer, uint16_t port);
 char *hk_net_syncer_status(struct HK_NetSyncer *syncer);
 
 void hk_net_syncer_free(struct HK_NetSyncer *syncer);
+
+struct HK_SocketSync *hk_socket_sync_new(struct HK_Engine *engine);
+
+int32_t hk_socket_sync_serve(struct HK_SocketSync *syncer, const char *path);
+
+int32_t hk_socket_sync_dial(struct HK_SocketSync *syncer, const char *path);
+
+char *hk_socket_sync_status(struct HK_SocketSync *syncer);
+
+void hk_socket_sync_free(struct HK_SocketSync *syncer);
 
 struct HK_CloudSync *hk_cloud_sync_new(struct HK_Engine *engine,
                                        int32_t mode,
