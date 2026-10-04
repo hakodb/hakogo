@@ -10,6 +10,20 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/**
+ * Default group-commit window (legacy triple-trigger behavior).
+ */
+#define DEFAULT_GROUP_COMMIT_INTERVAL_MS 5
+
+/**
+ * Crossover (bytes): a single String/Binary run longer than this emits
+ * faster via serde's SIMD scan than the write_json byte-loop. Duel
+ * bench `json_emit` pins both sides: 250 B ties (either arm within
+ * 10%), 7 KB differs 2.8x in serde's favor, everything smaller favors
+ * write_json up to 5.7x. 512 sits in the empty middle with 2x+ margins.
+ */
+#define HakoDoc_JSON_EMIT_BUDGET 512
+
 #define INSERT 1
 
 #define DELETE 2
@@ -104,6 +118,13 @@ struct HK_Config *hk_config_new(void);
 void hk_config_free(struct HK_Config *config);
 
 void hk_config_set_durability(struct HK_Config *config, int32_t mode);
+
+/**
+ * Group-commit window in ms (Interval mode). Stored raw; clamped to
+ * 1..=30_000 at open (see HakoConfig). Cluster use-case: per-instance
+ * intervals (+ staggered starts) spread fsync storms.
+ */
+void hk_config_set_group_commit_interval_ms(struct HK_Config *config, uint64_t ms);
 
 void hk_config_set_encryption_key(struct HK_Config *config, const char *key);
 
