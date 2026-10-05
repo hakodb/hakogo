@@ -24,5 +24,8 @@ jobs:
           go-version: stable
           cache: true
 
+      # ponytail: library packages only — examples/demo links the
+      # prebuilt native lib (third_party, MSVC-built, absent here).
+      # Demo breakage is caught at release packaging, not the gate.
       - name: build
-        run: go build ./...
+        run: go build ./hako/...
