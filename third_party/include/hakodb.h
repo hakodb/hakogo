@@ -248,6 +248,35 @@ int32_t hk_engine_replicate_collection(struct HK_Engine *engine, const char *col
  */
 int32_t hk_engine_vacuum_collection(struct HK_Engine *engine, const char *collection);
 
+/**
+ * Relocate docs by id from one collection to another (same engine).
+ * `ids_json`: JSON array of doc ids, e.g. `["a","b"]`. Returns a JSON
+ * report `{"moved":[...],"missing":[...]}`, or NULL on error (refusals:
+ * excluded sides, src == dst). Caller frees with `hk_string_free`.
+ */
+char *hk_engine_relocate_docs(struct HK_Engine *engine,
+                              const char *src,
+                              const char *dst,
+                              const char *ids_json);
+
+/**
+ * Load a lazy collection's snapshot into the index now (synchronous).
+ * Returns 0, or -1 on error (e.g. not a lazy collection).
+ */
+int32_t hk_engine_load_collection(struct HK_Engine *engine, const char *collection);
+
+/**
+ * Unload a lazy collection from the index (frees RAM; snapshot stays).
+ * Returns 0, or -1 on error (e.g. not a lazy collection).
+ */
+int32_t hk_engine_unload_collection(struct HK_Engine *engine, const char *collection);
+
+/**
+ * List lazy collections currently unloaded (not in the index), as a
+ * JSON array. Caller frees with `hk_string_free`.
+ */
+char *hk_engine_unloaded_collections(struct HK_Engine *engine);
+
 struct HK_Batch *hk_batch_new(void);
 
 void hk_batch_free(struct HK_Batch *batch);
