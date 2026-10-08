@@ -1788,3 +1788,63 @@ func insertAny(doc *Doc, key string, value any) error {
 		return fmt.Errorf("unsupported value for key %q: %T", key, v)
 	}
 }
+
+// RelocateReport mirrors the engine's relocate report: moved ids +
+// ids missing at source.
+type RelocateReport struct {
+	Moved   []string `json:"moved"`
+	Missing []string `json:"missing"`
+}
+
+// RelocateDocs moves docs by id from one collection to another (same
+// engine). Excluded (sync-withheld/local-only) sides are refused with
+// an error; missing ids are reported, not fatal.
+func (e *Engine) RelocateDocs(src, dst string, ids []string) (*RelocateReport, error) {
+	cs, fs := cString(src)
+	defer fs()
+	cd, fd := cString(dst)
+	defer fd()
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	cj, fj := cString(string(raw))
+	defer fj()
+	s, err := ownedCStringJSON(func() *C.char { return C.hk_engine_relocate_docs(e.ptr, cs, cd, cj) })
+	if err != nil {
+		return nil, err
+	}
+	var rep RelocateReport
+	if err := json.Unmarshal([]byte(s), &rep); err != nil {
+		return nil, err
+	}
+	return &rep, nil
+}
+
+// LoadCollection loads a lazy collection's snapshot into the index now.
+func (e *Engine) LoadCollection(collection string) error {
+	cc, free := cString(collection)
+	defer free()
+	return checkStatus("hk_engine_load_collection", C.hk_engine_load_collection(e.ptr, cc))
+}
+
+// UnloadCollection evicts a lazy collection from the index (frees RAM;
+// snapshot stays). Refuses non-lazy collections.
+func (e *Engine) UnloadCollection(collection string) error {
+	cc, free := cString(collection)
+	defer free()
+	return checkStatus("hk_engine_unload_collection", C.hk_engine_unload_collection(e.ptr, cc))
+}
+
+// UnloadedCollections lists lazy collections currently out of the index.
+func (e *Engine) UnloadedCollections() ([]string, error) {
+	s, err := ownedCStringJSON(func() *C.char { return C.hk_engine_unloaded_collections(e.ptr) })
+	if err != nil {
+		return nil, err
+	}
+	var cols []string
+	if err := json.Unmarshal([]byte(s), &cols); err != nil {
+		return nil, err
+	}
+	return cols, nil
+}
