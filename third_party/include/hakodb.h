@@ -28,6 +28,12 @@
 
 #define DELETE 2
 
+/**
+ * Max dims per index (Turso allows 65536; embedded starts tighter —
+ * loosen when a consumer shows up with bigger models).
+ */
+#define MAX_DIM 4096
+
 typedef struct HK_Array HK_Array;
 
 typedef struct HK_Batch HK_Batch;
@@ -560,6 +566,34 @@ int32_t hk_engine_create_simple_index(struct HK_Engine *engine,
 int32_t hk_engine_create_fts_index(struct HK_Engine *engine,
                                    const char *collection,
                                    const char *field);
+
+int32_t hk_engine_create_vector_index(struct HK_Engine *engine,
+                                      const char *collection,
+                                      const char *field,
+                                      uint32_t dim,
+                                      uint32_t metric);
+
+int32_t hk_query_where_near(struct HK_Query *query,
+                            const char *field,
+                            const float *vec_ptr,
+                            uintptr_t vec_len);
+
+/**
+ * One-shot KNN for FFI consumers (hakojs, hakogo, hakopascal):
+ * nearest-first `[{"id","score","doc"}]` as an owned string (free with
+ * `hk_string_free`). The query pipeline drops scores, so each hit's
+ * score is the exact metric distance recomputed against the stored
+ * document vector — same `distance()` the executor rescore uses, O(k·D),
+ * so the graph stays the only pruning stage. Dim mismatch is a hard
+ * error (null + `hk_last_error`); unindexed field returns `"[]"`
+ * (fail-closed, like `find_near`).
+ */
+char *hk_engine_find_near(struct HK_Engine *engine,
+                          const char *collection,
+                          const char *field,
+                          const float *vec_ptr,
+                          uintptr_t vec_len,
+                          uintptr_t k);
 
 char *hk_engine_list_indexes(struct HK_Engine *engine, const char *collection);
 

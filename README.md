@@ -1,4 +1,4 @@
-# Hako Go SDK (v0.1.3)
+# Hako Go SDK (v0.1.4)
 
 > Part of [**HakoDB**](https://github.com/hakodb/hakodb) — embedded Firestore-style document DB in Rust. The engine + C ABI live in `hakodb/hakodb`; this repo holds the Go SDK.
 
@@ -23,6 +23,7 @@ ergonomic layer. Module: `github.com/hakodb/hakogo`
 |---|---|
 | 0.1.1 | `cloud_sync` branch / `v0.8.21`+ release asset |
 | 0.1.3 | `hakodb v0.12.3` (archive: RelocateDocs/Load/Unload/UnloadedCollections) |
+| 0.1.4 | `hakodb v0.13.3` (`CreateVectorIndex` + `FindNear` KNN over `hk_engine_find_near`) |
 
 ## Setup — native library
 
