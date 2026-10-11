@@ -628,6 +628,56 @@ func (e *Engine) CreateFTSIndex(collection, field string) error {
 	defer ff()
 	return checkStatus("hk_engine_create_fts_index", C.hk_engine_create_fts_index(e.ptr, cc, cf))
 }
+
+// VectorMetric selects a vector index's distance function
+// (mirrors core Metric::from_u32: 0 = cosine, 1 = l2).
+type VectorMetric uint32
+
+const (
+	VectorCosine VectorMetric = 0
+	VectorL2     VectorMetric = 1
+)
+
+// NearHit is one KNN hit: doc id, exact metric distance (lower is
+// nearer), and the doc itself.
+type NearHit struct {
+	ID    string         `json:"id"`
+	Score float64        `json:"score"`
+	Doc   map[string]any `json:"doc"`
+}
+
+func (e *Engine) CreateVectorIndex(collection, field string, dim uint32, metric VectorMetric) error {
+	cc, fc := cString(collection)
+	cf, ff := cString(field)
+	defer fc()
+	defer ff()
+	return checkStatus("hk_engine_create_vector_index", C.hk_engine_create_vector_index(e.ptr, cc, cf, C.uint32_t(dim), C.uint32_t(metric)))
+}
+
+// FindNear runs a one-shot KNN search, nearest-first. A null return
+// (dim mismatch) surfaces as an error via hk_last_error; an unindexed
+// field returns an empty slice (fail-closed, like core find_near).
+func (e *Engine) FindNear(collection, field string, query []float32, k int) ([]NearHit, error) {
+	cc, fc := cString(collection)
+	cf, ff := cString(field)
+	defer fc()
+	defer ff()
+	var qptr *C.float
+	if len(query) > 0 {
+		qptr = (*C.float)(unsafe.Pointer(&query[0]))
+	}
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_find_near(e.ptr, cc, cf, qptr, C.uintptr_t(len(query)), C.uintptr_t(k))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_find_near failed: %w", err)
+	}
+	var hits []NearHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_find_near decode: %w", err)
+	}
+	return hits, nil
+}
 func (e *Engine) SnapshotIndices() error {
 	return checkStatus("hk_engine_snapshot_indices", C.hk_engine_snapshot_indices(e.ptr))
 }
