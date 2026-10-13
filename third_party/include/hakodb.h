@@ -29,6 +29,12 @@
 #define DELETE 2
 
 /**
+ * Hard depth cap: traversals always terminate (cycles via visited set,
+ * depth via this). Generous — real queries stop far earlier.
+ */
+#define MAX_TRAVERSE_DEPTH 32
+
+/**
  * Max dims per index (Turso allows 65536; embedded starts tighter —
  * loosen when a consumer shows up with bigger models).
  */
@@ -594,6 +600,38 @@ char *hk_engine_find_near(struct HK_Engine *engine,
                           const float *vec_ptr,
                           uintptr_t vec_len,
                           uintptr_t k);
+
+/**
+ * Opt a collection in as a traversal target (issue #53): inbound edges
+ * tracked from here on (live writes + backfill). Idempotent.
+ */
+int32_t hk_engine_create_traverse_index(struct HK_Engine *engine, const char *collection);
+
+/**
+ * Graph-traversal marker on a query (issue #53): BFS from
+ * (`start_col`, `start_id`); `direction` 0/1/2, `edge_field` null = any
+ * ref field, `max_depth` bound. Result cap rides query limit.
+ */
+int32_t hk_query_where_traverse(struct HK_Query *query,
+                                const char *start_col,
+                                const char *start_id,
+                                uint32_t direction,
+                                const char *edge_field,
+                                uintptr_t max_depth);
+
+/**
+ * One-shot graph BFS for FFI consumers: nearest-first is meaningless
+ * here — hits ride BFS order as `[{"collection","id","depth","doc"}]`
+ * (owned string, `hk_string_free`). Missing anchor = `"[]"`
+ * (fail-closed); incoming into untracked = null + `hk_last_error`.
+ */
+char *hk_engine_find_paths(struct HK_Engine *engine,
+                           const char *collection,
+                           const char *doc_id,
+                           uint32_t direction,
+                           const char *edge_field,
+                           uintptr_t max_depth,
+                           uintptr_t k);
 
 char *hk_engine_list_indexes(struct HK_Engine *engine, const char *collection);
 

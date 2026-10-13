@@ -678,6 +678,60 @@ func (e *Engine) FindNear(collection, field string, query []float32, k int) ([]N
 	}
 	return hits, nil
 }
+
+// TraverseDirection selects the BFS expansion (mirrors core
+// TraverseDir::from_u32: 0 = outgoing, 1 = incoming, 2 = both).
+type TraverseDirection uint32
+
+const (
+	TraverseOutgoing TraverseDirection = 0
+	TraverseIncoming TraverseDirection = 1
+	TraverseBoth     TraverseDirection = 2
+)
+
+// PathHit is one BFS hit: collection + id (paths cross collections),
+// depth, and the doc itself.
+type PathHit struct {
+	Collection string         `json:"collection"`
+	ID         string         `json:"id"`
+	Depth      int            `json:"depth"`
+	Doc        map[string]any `json:"doc"`
+}
+
+func (e *Engine) CreateTraverseIndex(collection string) error {
+	cc, fc := cString(collection)
+	defer fc()
+	return checkStatus("hk_engine_create_traverse_index", C.hk_engine_create_traverse_index(e.ptr, cc))
+}
+
+// FindPaths runs a one-shot graph BFS, BFS-order. A null return (bad
+// direction, bad depth, untracked incoming) surfaces as an error via
+// hk_last_error; a missing anchor returns an empty slice (fail-closed).
+// Edge "" means any ref field (nil would too — empty is explicit).
+func (e *Engine) FindPaths(collection, docID string, direction TraverseDirection, edge string, maxDepth, k int) ([]PathHit, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	defer fc()
+	defer fi()
+	var qptr *C.char
+	var qstr *C.char
+	if edge != "" {
+		qstr, _ = cString(edge)
+		defer C.free(unsafe.Pointer(qstr))
+		qptr = qstr
+	}
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_find_paths(e.ptr, cc, ci, C.uint32_t(direction), qptr, C.uintptr_t(maxDepth), C.uintptr_t(k))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_find_paths failed: %w", err)
+	}
+	var hits []PathHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_find_paths decode: %w", err)
+	}
+	return hits, nil
+}
 func (e *Engine) SnapshotIndices() error {
 	return checkStatus("hk_engine_snapshot_indices", C.hk_engine_snapshot_indices(e.ptr))
 }
