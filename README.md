@@ -1,8 +1,8 @@
 # Hako Go SDK (v0.1.4)
 
-> Part of [**HakoDB**](https://github.com/hakodb/hakodb) — embedded Firestore-style document DB in Rust. The engine + C ABI live in `hakodb/hakodb`; this repo holds the Go SDK.
+> Part of [**HakoDB**](https://github.com/hakodb/hakodb) — embedded document DB with native vector search and multi-plane sync, written in Rust. The engine + C ABI live in `hakodb/hakodb`; this repo holds the Go SDK.
 
-A complete Go SDK over the HakoDB C-FFI surface, with a Firestore-style
+A complete Go SDK over the HakoDB C-FFI surface, with a fluent document
 ergonomic layer. Module: `github.com/hakodb/hakogo`
 (package `hako`).
 
@@ -10,7 +10,7 @@ ergonomic layer. Module: `github.com/hakodb/hakogo`
 
 - Full FFI handle coverage: engine, config, doc, array, query, batch, transaction, watch.
 - Complete query/filter/operator coverage available in `hako.Query`.
-- Firestore-style fluent API:
+- Fluent document API:
   - `client.Collection("users").Doc("alice").Set(...)`
   - `Where(...).OrderBy(...).Limit(...).Get()`
   - `Batch().Set(...).Delete(...).Commit()`
