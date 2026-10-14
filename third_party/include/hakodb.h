@@ -633,6 +633,33 @@ char *hk_engine_find_paths(struct HK_Engine *engine,
                            uintptr_t max_depth,
                            uintptr_t k);
 
+/**
+ * Register an edge collection (issue #53, Phase B): tracks it for
+ * inbound lookup AND indexes `_from`/`_to` for edge lookup — all three
+ * ride existing machinery, so sync + persistence need no new shapes.
+ * Idempotent.
+ */
+int32_t hk_engine_create_edge_index(struct HK_Engine *engine, const char *collection);
+
+/**
+ * Weighted shortest paths (Phase B): Dijkstra over inline refs +
+ * `via_edge` edge docs, ordered by accumulated cost. Same JSON shape
+ * as `find_paths` (with exact `cost` per hit). `weight_field` null =
+ * uniform 1.0 per hop (BFS-equivalent order). Missing anchor = `"[]"`
+ * (fail-closed); bad depth/direction/untracked incoming = null +
+ * `hk_last_error`. `find_paths` is frozen — this additive fn carries
+ * the new arity so existing bindings never break.
+ */
+char *hk_engine_shortest_paths(struct HK_Engine *engine,
+                               const char *collection,
+                               const char *doc_id,
+                               uint32_t direction,
+                               const char *edge_field,
+                               const char *via_edge,
+                               const char *weight_field,
+                               uintptr_t max_depth,
+                               uintptr_t k);
+
 char *hk_engine_list_indexes(struct HK_Engine *engine, const char *collection);
 
 struct HK_Transaction *hk_transaction_begin(struct HK_Engine *engine);
