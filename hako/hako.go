@@ -695,6 +695,7 @@ type PathHit struct {
 	Collection string         `json:"collection"`
 	ID         string         `json:"id"`
 	Depth      int            `json:"depth"`
+	Cost       float64        `json:"cost,omitempty"`
 	Doc        map[string]any `json:"doc"`
 }
 
@@ -704,6 +705,20 @@ func (e *Engine) CreateTraverseIndex(collection string) error {
 	return checkStatus("hk_engine_create_traverse_index", C.hk_engine_create_traverse_index(e.ptr, cc))
 }
 
+// optCString maps "" to NULL (absent optional), else a freed C string.
+func optCString(v string) (*C.char, func()) {
+	if v == "" {
+		return nil, func() {}
+	}
+	return cString(v)
+}
+
+func (e *Engine) CreateEdgeIndex(collection string) error {
+	cc, fc := cString(collection)
+	defer fc()
+	return checkStatus("hk_engine_create_edge_index", C.hk_engine_create_edge_index(e.ptr, cc))
+}
+
 // FindPaths runs a one-shot graph BFS, BFS-order. A null return (bad
 // direction, bad depth, untracked incoming) surfaces as an error via
 // hk_last_error; a missing anchor returns an empty slice (fail-closed).
@@ -711,17 +726,12 @@ func (e *Engine) CreateTraverseIndex(collection string) error {
 func (e *Engine) FindPaths(collection, docID string, direction TraverseDirection, edge string, maxDepth, k int) ([]PathHit, error) {
 	cc, fc := cString(collection)
 	ci, fi := cString(docID)
+	ce, fe := optCString(edge)
 	defer fc()
 	defer fi()
-	var qptr *C.char
-	var qstr *C.char
-	if edge != "" {
-		qstr, _ = cString(edge)
-		defer C.free(unsafe.Pointer(qstr))
-		qptr = qstr
-	}
+	defer fe()
 	out, err := ownedCStringJSON(func() *C.char {
-		return C.hk_engine_find_paths(e.ptr, cc, ci, C.uint32_t(direction), qptr, C.uintptr_t(maxDepth), C.uintptr_t(k))
+		return C.hk_engine_find_paths(e.ptr, cc, ci, C.uint32_t(direction), ce, C.uintptr_t(maxDepth), C.uintptr_t(k))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("hk_engine_find_paths failed: %w", err)
@@ -729,6 +739,33 @@ func (e *Engine) FindPaths(collection, docID string, direction TraverseDirection
 	var hits []PathHit
 	if err := json.Unmarshal([]byte(out), &hits); err != nil {
 		return nil, fmt.Errorf("hk_engine_find_paths decode: %w", err)
+	}
+	return hits, nil
+}
+
+// ShortestPaths runs weighted Dijkstra over inline refs + the `via`
+// edge collection, cost-ordered. `weight` names the numeric prop on
+// edge docs ("" = uniform 1.0). Same null/empty contract as FindPaths.
+func (e *Engine) ShortestPaths(collection, docID string, direction TraverseDirection, edge, via, weight string, maxDepth, k int) ([]PathHit, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cw, fw := optCString(weight)
+	defer fc()
+	defer fi()
+	defer fe()
+	defer fv()
+	defer fw()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_shortest_paths(e.ptr, cc, ci, C.uint32_t(direction), ce, cv, cw, C.uintptr_t(maxDepth), C.uintptr_t(k))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_shortest_paths failed: %w", err)
+	}
+	var hits []PathHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_shortest_paths decode: %w", err)
 	}
 	return hits, nil
 }
