@@ -776,13 +776,15 @@ struct HK_CloudSync *hk_cloud_sync_new(struct HK_Engine *engine,
                                        const char *auth_token);
 
 /**
- * Creates a room-agnostic cloud SERVER. Not bound to any room: the server
- * accepts and persists any (room_name, room_key) pair its clients ask for and
- * routes sync to the matching room group.
+ * Creates a room-bound cloud SERVER: serves exactly the configured room
+ * on this database (single-database, like the mesh). Clients presenting
+ * a different (room_name, room_key) pair are rejected at handshake.
  */
 struct HK_CloudSync *hk_cloud_sync_server_new(struct HK_Engine *engine,
                                               const char *server_id,
-                                              const char *auth_token);
+                                              const char *auth_token,
+                                              const char *room_name,
+                                              const char *room_key);
 
 /**
  * Creates an offline-first cloud CLIENT bound to a room of the caller's
