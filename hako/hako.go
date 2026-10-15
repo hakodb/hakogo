@@ -532,16 +532,19 @@ func (e *Engine) NewCloudSync(mode CloudSyncMode, clientID, roomName, roomKey, a
 	return &CloudSync{ptr: ptr}, nil
 }
 
-// NewCloudSyncServer creates a room-agnostic cloud SERVER ("big cloud server
-// storage"). It is not bound to any room: it accepts and persists any
-// (roomName, roomKey) pair its clients ask for, stores each room's collections
-// under its own storage prefix and relays sync only to the members of that room.
-func (e *Engine) NewCloudSyncServer(serverID, authToken string) (*CloudSync, error) {
+// NewCloudSyncServer creates a room-bound cloud SERVER serving exactly the
+// configured room on this database. Clients presenting a different
+// (roomName, roomKey) pair are rejected at handshake.
+func (e *Engine) NewCloudSyncServer(serverID, authToken, roomName, roomKey string) (*CloudSync, error) {
 	si, fsi := cString(serverID)
 	ct, ft := cString(authToken)
+	rn, frn := cString(roomName)
+	rk, frk := cString(roomKey)
 	defer fsi()
 	defer ft()
-	ptr := C.hk_cloud_sync_server_new(e.ptr, si, ct)
+	defer frn()
+	defer frk()
+	ptr := C.hk_cloud_sync_server_new(e.ptr, si, ct, rn, rk)
 	if ptr == nil {
 		return nil, fmt.Errorf("hk_cloud_sync_server_new failed: %s", lastError())
 	}
@@ -1477,9 +1480,10 @@ func (c *Client) CloudSync(mode CloudSyncMode, clientID, roomName, roomKey, auth
 	return c.engine.NewCloudSync(mode, clientID, roomName, roomKey, authToken)
 }
 
-// CloudSyncServer creates a room-agnostic cloud SERVER for this engine.
-func (c *Client) CloudSyncServer(serverID, authToken string) (*CloudSync, error) {
-	return c.engine.NewCloudSyncServer(serverID, authToken)
+// CloudSyncServer creates a room-bound cloud SERVER serving exactly the
+// configured room on this engine.
+func (c *Client) CloudSyncServer(serverID, authToken, roomName, roomKey string) (*CloudSync, error) {
+	return c.engine.NewCloudSyncServer(serverID, authToken, roomName, roomKey)
 }
 
 // CloudSyncClient creates an offline-first cloud CLIENT bound to a room.

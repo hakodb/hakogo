@@ -115,9 +115,9 @@ func main() {
 
 	// ---- CloudSync ----
 	// Requires the DLL/so built with --features cloud-sync.
-	// A room-agnostic server is created with NewCloudSyncServer; a client picks
+	// A room-bound server is created with NewCloudSyncServer; a client picks
 	// its room with NewCloudSyncClient. This example only shows construction.
-	cloud, err := engine.NewCloudSyncServer("go-server", "secret-token")
+	cloud, err := engine.NewCloudSyncServer("go-server", "secret-token", "demo-room", "demo-key")
 	if err != nil {
 		log.Fatal(err)
 	}
