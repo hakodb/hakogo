@@ -40,6 +40,13 @@
  */
 #define MAX_DIM 4096
 
+/**
+ * Fail-closed frame cap for the length-prefix planes (mesh TCP, unix
+ * socket): a corrupt length prefix fails the connection, never allocates
+ * the box. Snapshots bigger than this fail the peer, not the process.
+ */
+#define MAX_FRAME ((256 * 1024) * 1024)
+
 typedef struct HK_Array HK_Array;
 
 typedef struct HK_Batch HK_Batch;
