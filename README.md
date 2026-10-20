@@ -1,4 +1,4 @@
-# Hako Go SDK (v0.1.8)
+# Hako Go SDK (v0.1.9)
 
 > Part of [**HakoDB**](https://github.com/hakodb/hakodb) — embedded document DB with native vector search and multi-plane sync, written in Rust. The engine + C ABI live in `hakodb/hakodb`; this repo holds the Go SDK.
 
@@ -28,6 +28,7 @@ ergonomic layer. Module: `github.com/hakodb/hakogo`
 | 0.1.6 | `hakodb v0.15.0` (Phase B: `CreateEdgeIndex` + `ShortestPaths` Dijkstra) |
 | 0.1.7 | `hakodb v0.15.3` (patch: ring-only TLS + shared sync framing, fail-closed 256MB frame cap) |
 | 0.1.8 | `hakodb v0.16.0` (breaking: room-bound `hk_cloud_sync_server_new` takes `room_name` + `room_key`) |
+| 0.1.9 | `hakodb v0.16.5` (schemas, versioned reads, quiescence, explain, elemMatch/allEq/near/traverse, full C-ABI parity) |
 
 ## Setup — native library
 

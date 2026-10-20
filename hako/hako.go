@@ -38,20 +38,21 @@ import (
 )
 
 type (
-	Engine      struct{ ptr *C.HK_Engine }
-	Config      struct{ ptr *C.HK_Config }
-	Doc         struct{ ptr *C.HK_Doc }
-	Array       struct{ ptr *C.HK_Array }
-	Query       struct{ ptr *C.HK_Query }
-	Batch       struct{ ptr *C.HK_Batch }
-	Transaction struct{ ptr *C.HK_Transaction }
-	NetSyncer   struct{ ptr *C.HK_NetSyncer }
-	ResultSet   struct{ ptr *C.HK_ResultSet }
-	RawDoc      struct{ ptr *C.HK_RawDoc }
+	Engine       struct{ ptr *C.HK_Engine }
+	Config       struct{ ptr *C.HK_Config }
+	Doc          struct{ ptr *C.HK_Doc }
+	Array        struct{ ptr *C.HK_Array }
+	Query        struct{ ptr *C.HK_Query }
+	Batch        struct{ ptr *C.HK_Batch }
+	Transaction  struct{ ptr *C.HK_Transaction }
+	NetSyncer    struct{ ptr *C.HK_NetSyncer }
+	ResultSet    struct{ ptr *C.HK_ResultSet }
+	RawDoc       struct{ ptr *C.HK_RawDoc }
 	RawResultSet struct{ ptr *C.HK_RawResultSet }
-	ViewDoc     struct{ ptr *C.HK_ViewDoc }
-	CloudSync   struct{ ptr *C.HK_CloudSync }
-	Watch       struct {
+	ViewDoc      struct{ ptr *C.HK_ViewDoc }
+	CloudSync    struct{ ptr *C.HK_CloudSync }
+	Pipeline     struct{ ptr *C.HK_Pipeline }
+	Watch        struct {
 		ptr    *C.HK_Watch
 		handle cgo.Handle
 	}
@@ -205,6 +206,49 @@ func (c *Config) SetBlobThreshold(thresholdBytes uintptr) {
 // SetWALReserveBytes sets the WAL headroom reservation (0 = off).
 func (c *Config) SetWALReserveBytes(bytes uint64) {
 	C.hk_config_set_wal_reserve_bytes(c.ptr, C.uint64_t(bytes))
+}
+
+// SetGroupCommitIntervalMs sets the group-commit window; core clamps it.
+func (c *Config) SetGroupCommitIntervalMs(ms uint64) {
+	C.hk_config_set_group_commit_interval_ms(c.ptr, C.uint64_t(ms))
+}
+
+// SetPageCacheCapacity bounds the page cache (0 = core default).
+func (c *Config) SetPageCacheCapacity(capacity uintptr) {
+	C.hk_config_set_page_cache_capacity(c.ptr, C.uintptr_t(capacity))
+}
+
+// SetSyncExcluded pins collections out of every sync plane, both directions.
+func (c *Config) SetSyncExcluded(collections ...string) error {
+	payload, err := json.Marshal(collections)
+	if err != nil {
+		return err
+	}
+	cj, free := cString(string(payload))
+	defer free()
+	return checkStatus("hk_config_set_sync_excluded", C.hk_config_set_sync_excluded(c.ptr, cj))
+}
+
+// SetLazyCollections marks residency groups; archived collections load on touch.
+func (c *Config) SetLazyCollections(collections ...string) error {
+	payload, err := json.Marshal(collections)
+	if err != nil {
+		return err
+	}
+	cj, free := cString(string(payload))
+	defer free()
+	return checkStatus("hk_config_set_lazy_collections", C.hk_config_set_lazy_collections(c.ptr, cj))
+}
+
+// SetReplicationCollections opts specific collections into replication.
+func (c *Config) SetReplicationCollections(collections ...string) error {
+	payload, err := json.Marshal(collections)
+	if err != nil {
+		return err
+	}
+	cj, free := cString(string(payload))
+	defer free()
+	return checkStatus("hk_config_set_replication_collections", C.hk_config_set_replication_collections(c.ptr, cj))
 }
 
 func NewDoc() *Doc { return &Doc{ptr: C.hk_doc_new()} }
@@ -451,6 +495,68 @@ func (e *Engine) ListIndexes(collection string) (string, error) {
 	cc, free := cString(collection)
 	defer free()
 	return ownedCStringJSON(func() *C.char { return C.hk_engine_list_indexes(e.ptr, cc) })
+}
+
+// SetSchema declares or replaces a collection schema. schemaJSON mirrors the
+// core CollectionSchema; write violations surface as ConstraintMismatch.
+func (e *Engine) SetSchema(collection, schemaJSON string) error {
+	cc, fc := cString(collection)
+	cs, fs := cString(schemaJSON)
+	defer fc()
+	defer fs()
+	return checkStatus("hk_engine_set_schema", C.hk_engine_set_schema(e.ptr, cc, cs))
+}
+
+// GetSchema returns "" when the collection has no schema. A NULL return with
+// a clear last-error means "absent"; only a set error is a failure.
+func (e *Engine) GetSchema(collection string) (string, error) {
+	cc, fc := cString(collection)
+	defer fc()
+	ptr := C.hk_engine_get_schema(e.ptr, cc)
+	if ptr == nil {
+		if C.hk_last_error() == nil {
+			return "", nil
+		}
+		return "", fmt.Errorf("hk_engine_get_schema failed: %s", lastError())
+	}
+	defer C.hk_string_free(ptr)
+	return C.GoString(ptr), nil
+}
+
+// ClearSchema removes a collection's schema; writes become free-form again.
+func (e *Engine) ClearSchema(collection string) error {
+	cc, fc := cString(collection)
+	defer fc()
+	return checkStatus("hk_engine_clear_schema", C.hk_engine_clear_schema(e.ptr, cc))
+}
+
+// ListSchemas returns the JSON object of declared schemas keyed by collection.
+func (e *Engine) ListSchemas() (string, error) {
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_list_schemas(e.ptr) })
+}
+
+// GetVersioned returns a document plus the commit version it was read at.
+func (e *Engine) GetVersioned(collection, docID string) (*Doc, uint64, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	defer fc()
+	defer fi()
+	var version C.uint64_t
+	ptr := C.hk_engine_get_versioned(e.ptr, cc, ci, &version)
+	if ptr == nil {
+		return nil, 0, nil
+	}
+	return &Doc{ptr: ptr}, uint64(version), nil
+}
+
+// AwaitQuiescent waits for background index/blob work, bounded by timeoutMs.
+func (e *Engine) AwaitQuiescent(timeoutMs uint64) bool {
+	return bool(C.hk_engine_await_quiescent(e.ptr, C.uint64_t(timeoutMs)))
+}
+
+// QuiescenceStatus returns the raw JSON point-sample diagnostic.
+func (e *Engine) QuiescenceStatus() (string, error) {
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_quiescence_status(e.ptr) })
 }
 
 func (e *Engine) ListCollections() ([]string, error) {
@@ -836,6 +942,33 @@ func (e *Engine) CommitTransaction(t *Transaction) error {
 	return checkStatus("hk_transaction_commit", C.hk_transaction_commit(e.ptr, t.ptr))
 }
 
+// TxGetMany reads several documents in one transaction snapshot. The core
+// returns a JSON array; callers decode as needed.
+func (e *Engine) TxGetMany(t *Transaction, collection string, ids []string) (string, error) {
+	payload, err := json.Marshal(ids)
+	if err != nil {
+		return "", err
+	}
+	cc, fc := cString(collection)
+	cj, fj := cString(string(payload))
+	defer fc()
+	defer fj()
+	return ownedCStringJSON(func() *C.char {
+		return C.hk_transaction_get_many(e.ptr, t.ptr, cc, cj)
+	})
+}
+
+// TxPatch applies a JSON merge patch inside the transaction.
+func (e *Engine) TxPatch(t *Transaction, collection, docID, updatesJSON string) error {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	cu, fu := cString(updatesJSON)
+	defer fc()
+	defer fi()
+	defer fu()
+	return checkStatus("hk_transaction_patch", C.hk_transaction_patch(e.ptr, t.ptr, cc, ci, cu))
+}
+
 func NewQuery(collection string) *Query {
 	cc, free := cString(collection)
 	defer free()
@@ -992,6 +1125,46 @@ func (q *Query) WhereStartsWith(field, value string) error {
 	defer fv()
 	return checkStatus("hk_query_where_starts_with", C.hk_query_where_starts_with(q.ptr, cf, cv))
 }
+
+// WhereArrayAllEq matches arrays whose every element equals valueJSON.
+func (q *Query) WhereArrayAllEq(field, valueJSON string) error {
+	cf, ff := cString(field)
+	cv, fv := cString(valueJSON)
+	defer ff()
+	defer fv()
+	return checkStatus("hk_query_where_array_all_eq", C.hk_query_where_array_all_eq(q.ptr, cf, cv))
+}
+
+// WhereElemMatch matches when some array element satisfies all filtersJSON.
+func (q *Query) WhereElemMatch(field, filtersJSON string) error {
+	cf, ff := cString(field)
+	cv, fv := cString(filtersJSON)
+	defer ff()
+	defer fv()
+	return checkStatus("hk_query_where_elem_match", C.hk_query_where_elem_match(q.ptr, cf, cv))
+}
+
+// WhereNear adds a KNN marker to the query; the result cap rides Limit.
+func (q *Query) WhereNear(field string, vec []float32) error {
+	cf, ff := cString(field)
+	defer ff()
+	var ptr *C.float
+	if len(vec) > 0 {
+		ptr = (*C.float)(unsafe.Pointer(&vec[0]))
+	}
+	return checkStatus("hk_query_where_near", C.hk_query_where_near(q.ptr, cf, ptr, C.uintptr_t(len(vec))))
+}
+
+// WhereTraverse adds a BFS marker; edge "" means any reference field.
+func (q *Query) WhereTraverse(startCol, startID string, direction TraverseDirection, edge string, maxDepth uintptr) error {
+	cc, fc := cString(startCol)
+	ci, fi := cString(startID)
+	ce, fe := optCString(edge)
+	defer fc()
+	defer fi()
+	defer fe()
+	return checkStatus("hk_query_where_traverse", C.hk_query_where_traverse(q.ptr, cc, ci, C.uint32_t(direction), ce, C.uintptr_t(maxDepth)))
+}
 func (q *Query) OrderBy(field string, ascending bool) error {
 	cf, ff := cString(field)
 	defer ff()
@@ -1045,6 +1218,11 @@ func (q *Query) AggregateAvg(field string) error {
 func (e *Engine) ExecuteQuery(q *Query) (string, error) {
 	return ownedCStringJSON(func() *C.char { return C.hk_query_execute(e.ptr, q.ptr) })
 }
+
+// ExplainQuery returns the query plan JSON (F7).
+func (e *Engine) ExplainQuery(q *Query) (string, error) {
+	return ownedCStringJSON(func() *C.char { return C.hk_query_explain(e.ptr, q.ptr) })
+}
 func (e *Engine) ExecuteAggregation(q *Query) (string, error) {
 	return ownedCStringJSON(func() *C.char { return C.hk_query_execute_aggregation(e.ptr, q.ptr) })
 }
@@ -1088,6 +1266,79 @@ func (e *Engine) ExecuteQueryToHandles(q *Query) (*ResultSet, error) {
 	ptr := C.hk_query_execute_to_handles(e.ptr, q.ptr)
 	if ptr == nil {
 		return nil, fmt.Errorf("hk_query_execute_to_handles failed: %s", lastError())
+	}
+	return &ResultSet{ptr: ptr}, nil
+}
+
+// NewPipeline starts an aggregation pipeline on a collection.
+func NewPipeline(collection string) *Pipeline {
+	cc, free := cString(collection)
+	defer free()
+	return &Pipeline{ptr: C.hk_pipeline_new(cc)}
+}
+
+func (p *Pipeline) Free() {
+	if p != nil && p.ptr != nil {
+		C.hk_pipeline_free(p.ptr)
+		p.ptr = nil
+	}
+}
+
+// Match appends a match stage; the query is copied, the caller keeps it.
+func (p *Pipeline) Match(q *Query) error {
+	return checkStatus("hk_pipeline_match", C.hk_pipeline_match(p.ptr, q.ptr))
+}
+
+// Project appends a projection stage for the given fields.
+func (p *Pipeline) Project(fields ...string) error {
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	cj, free := cString(string(payload))
+	defer free()
+	return checkStatus("hk_pipeline_project", C.hk_pipeline_project(p.ptr, cj))
+}
+
+func (p *Pipeline) Sort(field string, ascending bool) error {
+	cf, ff := cString(field)
+	defer ff()
+	return checkStatus("hk_pipeline_sort", C.hk_pipeline_sort(p.ptr, cf, C.bool(ascending)))
+}
+
+func (p *Pipeline) Limit(v uintptr) error {
+	return checkStatus("hk_pipeline_limit", C.hk_pipeline_limit(p.ptr, C.uintptr_t(v)))
+}
+
+func (p *Pipeline) Offset(v uintptr) error {
+	return checkStatus("hk_pipeline_offset", C.hk_pipeline_offset(p.ptr, C.uintptr_t(v)))
+}
+
+func (p *Pipeline) Unwind(field string) error {
+	cf, ff := cString(field)
+	defer ff()
+	return checkStatus("hk_pipeline_unwind", C.hk_pipeline_unwind(p.ptr, cf))
+}
+
+// Group appends a group stage; accumsJSON follows the core accumulator shape.
+func (p *Pipeline) Group(key, accumsJSON string) error {
+	ck, fk := cString(key)
+	ca, fa := cString(accumsJSON)
+	defer fk()
+	defer fa()
+	return checkStatus("hk_pipeline_group", C.hk_pipeline_group(p.ptr, ck, ca))
+}
+
+// ExecutePipeline runs the pipeline and returns its JSON result.
+func (e *Engine) ExecutePipeline(p *Pipeline) (string, error) {
+	return ownedCStringJSON(func() *C.char { return C.hk_pipeline_execute(e.ptr, p.ptr) })
+}
+
+// ExecutePipelineToHandles runs the pipeline without the JSON round-trip.
+func (e *Engine) ExecutePipelineToHandles(p *Pipeline) (*ResultSet, error) {
+	ptr := C.hk_pipeline_execute_to_handles(e.ptr, p.ptr)
+	if ptr == nil {
+		return nil, fmt.Errorf("hk_pipeline_execute_to_handles failed: %s", lastError())
 	}
 	return &ResultSet{ptr: ptr}, nil
 }
@@ -1992,4 +2243,22 @@ func (e *Engine) UnloadedCollections() ([]string, error) {
 		return nil, err
 	}
 	return cols, nil
+}
+
+// ErrorKind returns the typed kind of the last error on this goroutine's
+// thread (0 none, 2 retryable, 4 constraint mismatch, ...).
+func ErrorKind() int32 { return int32(C.hk_error_last_kind()) }
+
+// IsRetryable reports whether the last error is classified retryable.
+func IsRetryable() bool { return bool(C.hk_error_is_retryable()) }
+
+// EnableStderrLog turns on core diagnostic logging (default off).
+func EnableStderrLog() { C.hk_log_enable_stderr() }
+
+// DisableStderrLog turns off core diagnostic logging.
+func DisableStderrLog() { C.hk_log_disable_stderr() }
+
+// DebugWriteStats returns the write-phase breakdown and resets counters.
+func DebugWriteStats() (string, error) {
+	return ownedCStringJSON(func() *C.char { return C.hk_debug_write_stats() })
 }
