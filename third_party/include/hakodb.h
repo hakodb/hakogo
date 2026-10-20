@@ -15,15 +15,6 @@
  */
 #define DEFAULT_GROUP_COMMIT_INTERVAL_MS 5
 
-/**
- * Crossover (bytes): a single String/Binary run longer than this emits
- * faster via serde's SIMD scan than the write_json byte-loop. Duel
- * bench `json_emit` pins both sides: 250 B ties (either arm within
- * 10%), 7 KB differs 2.8x in serde's favor, everything smaller favors
- * write_json up to 5.7x. 512 sits in the empty middle with 2x+ margins.
- */
-#define HakoDoc_JSON_EMIT_BUDGET 512
-
 #define INSERT 1
 
 #define DELETE 2
@@ -47,6 +38,17 @@
  */
 #define MAX_FRAME ((256 * 1024) * 1024)
 
+/**
+ * Outcome codes for NetSyncer::mesh_dial_status (see dial_state docs).
+ */
+#define MESH_DIAL_CONNECTED 1
+
+#define MESH_DIAL_REFUSED 2
+
+#define MESH_DIAL_TIMEOUT 3
+
+#define MESH_DIAL_ENDED 4
+
 typedef struct HK_Array HK_Array;
 
 typedef struct HK_Batch HK_Batch;
@@ -60,6 +62,11 @@ typedef struct HK_Doc HK_Doc;
 typedef struct HK_Engine HK_Engine;
 
 typedef struct HK_NetSyncer HK_NetSyncer;
+
+/**
+ * F4 aggregation pipeline builder handle (`hk_pipeline_*`).
+ */
+typedef struct HK_Pipeline HK_Pipeline;
 
 typedef struct HK_Query HK_Query;
 
@@ -175,6 +182,26 @@ void hk_config_set_blob_threshold(struct HK_Config *config, uintptr_t threshold_
  */
 void hk_config_set_wal_reserve_bytes(struct HK_Config *config, uint64_t bytes);
 
+void hk_config_set_page_cache_capacity(struct HK_Config *config, uintptr_t capacity);
+
+/**
+ * Collections pinned OUT of every sync plane (mesh/cloud/socket), both
+ * directions. JSON array of names.
+ */
+int32_t hk_config_set_sync_excluded(struct HK_Config *config, const char *collections_json);
+
+/**
+ * Lazy-residency groups (exact names or trailing-`*` prefixes). JSON
+ * array; archived collections stay on disk, load on touch.
+ */
+int32_t hk_config_set_lazy_collections(struct HK_Config *config, const char *collections_json);
+
+/**
+ * Replication opt-in list (None = all collections). JSON array of names.
+ */
+int32_t hk_config_set_replication_collections(struct HK_Config *config,
+                                              const char *collections_json);
+
 /**
  * Write-path phase breakdown (see engine::write_stats_report). Returns a
  * fresh C string the caller frees with hk_string_free. Counters reset.
@@ -228,6 +255,16 @@ int32_t hk_engine_insert_take(struct HK_Engine *engine,
                               struct HK_Doc *doc);
 
 struct HK_Doc *hk_engine_get(struct HK_Engine *engine, const char *collection, const char *doc_id);
+
+/**
+ * Atomic `(doc, version)`: both are captured under one shard read, so an
+ * RMW loop cannot pair a new version with a stale doc (issue #71/F5 item
+ * 3). `out_version` may be NULL; it receives 0 when the doc is absent.
+ */
+struct HK_Doc *hk_engine_get_versioned(struct HK_Engine *engine,
+                                       const char *collection,
+                                       const char *doc_id,
+                                       uint64_t *out_version);
 
 int32_t hk_engine_delete(struct HK_Engine *engine, const char *collection, const char *doc_id);
 
@@ -365,6 +402,25 @@ int32_t hk_query_where_array_contains_any(struct HK_Query *query,
                                           const char *field,
                                           struct HK_Array *array);
 
+/**
+ * F3 `all_eq`: every element of `field` compares equal to the value.
+ * `value_json` is a scalar JSON value (`2`, `"open"`, `true`, ...).
+ */
+int32_t hk_query_where_array_all_eq(struct HK_Query *query,
+                                    const char *field,
+                                    const char *value_json);
+
+/**
+ * F3 `elemMatch`: some element of the array at `field` satisfies ALL the
+ * filters in `filters_json`. Sub-filter fields are element-relative paths
+ * (`"sku"`, `"meta.qty"`, `""` for the element itself).
+ *
+ * `filters_json`: `[{"field":"qty","op":"gt","value":2}, ...]`.
+ */
+int32_t hk_query_where_elem_match(struct HK_Query *query,
+                                  const char *field,
+                                  const char *filters_json);
+
 int32_t hk_query_where_not_in(struct HK_Query *query, const char *field, struct HK_Array *array);
 
 int32_t hk_query_order_by(struct HK_Query *query, const char *field, bool ascending);
@@ -390,6 +446,13 @@ int32_t hk_query_offset(struct HK_Query *query, uintptr_t offset);
 int32_t hk_query_select_field(struct HK_Query *query, const char *field);
 
 char *hk_query_execute(struct HK_Engine *engine, const struct HK_Query *query);
+
+/**
+ * F7: plan explanation without executing the query. Returns JSON
+ * (`ExplainReport`: scan/index, counts, covering, available indexes).
+ * Caller frees with `hk_string_free`.
+ */
+char *hk_query_explain(struct HK_Engine *engine, const struct HK_Query *query);
 
 struct HK_ResultSet *hk_query_execute_to_handles(struct HK_Engine *engine,
                                                  const struct HK_Query *query);
@@ -501,6 +564,21 @@ char *hk_doc_to_json(const struct HK_Doc *doc);
 const char *hk_last_error(void);
 
 /**
+ * Classification code of the last error on this thread (issue #71/F5):
+ * 0 = none, 1 = generic do-not-retry, 2 = retryable conflict /
+ * backfill-in-progress, 3 = unique-index violation. SDK retry loops
+ * branch on this — never on the message string. Stable numeric contract.
+ */
+int32_t hk_error_last_kind(void);
+
+/**
+ * Convenience predicate for SDK retry loops: true iff the last error on
+ * this thread is classified retryable (kind 2, issue #71/F5). Equivalent to
+ * `hk_error_last_kind() == 2`; kept so bindings do not hardcode the code.
+ */
+bool hk_error_is_retryable(void);
+
+/**
  * Enable library diagnostic logging to stderr. Default OFF. Idempotent.
  */
 void hk_log_enable_stderr(void);
@@ -564,6 +642,10 @@ int32_t hk_engine_patch(struct HK_Engine *engine,
 /**
  * Creates a composite index from C++.
  * fields_json should be like: [{"field": "age", "desc": false}]
+ * Optional constraint form (hakodb#71):
+ *   {"fields": [...], "unique": true, "sparse": false,
+ *    "filter": {"logic": "And", "filters": [...]}
+ * — legacy bare arrays keep working (non-unique, sparse semantics).
  */
 uint32_t hk_engine_create_index(struct HK_Engine *engine,
                                 const char *collection,
@@ -669,6 +751,76 @@ char *hk_engine_shortest_paths(struct HK_Engine *engine,
 
 char *hk_engine_list_indexes(struct HK_Engine *engine, const char *collection);
 
+/**
+ * Declare or replace a collection schema. `schema_json` is parsed by serde;
+ * an empty `{"fields":[]}` clears the schema (same as `clear`). Returns 0 on
+ * success, -1 on error (typed error available via `hk_error_last_kind`).
+ */
+int32_t hk_engine_set_schema(struct HK_Engine *engine,
+                             const char *collection,
+                             const char *schema_json);
+
+/**
+ * Return the collection's schema as JSON, or NULL when the collection has no
+ * schema. NULL is not an error in that case (`hk_last_error` stays clear).
+ * Free the returned string with `hk_string_free`.
+ */
+char *hk_engine_get_schema(struct HK_Engine *engine, const char *collection);
+
+/**
+ * Remove a collection's schema. Returns 0 on success, -1 on error.
+ */
+int32_t hk_engine_clear_schema(struct HK_Engine *engine, const char *collection);
+
+/**
+ * Return every declared schema as a JSON object keyed by collection name.
+ * Free the returned string with `hk_string_free`.
+ */
+char *hk_engine_list_schemas(struct HK_Engine *engine);
+
+struct HK_Pipeline *hk_pipeline_new(const char *collection);
+
+void hk_pipeline_free(struct HK_Pipeline *pipeline);
+
+/**
+ * Append a `match` stage from a query handle. The query is copied; the
+ * caller keeps ownership of `query`.
+ */
+int32_t hk_pipeline_match(struct HK_Pipeline *pipeline, const struct HK_Query *query);
+
+/**
+ * `fields_json`: JSON array of field names (`["id","items.qty"]`).
+ */
+int32_t hk_pipeline_project(struct HK_Pipeline *pipeline, const char *fields_json);
+
+int32_t hk_pipeline_sort(struct HK_Pipeline *pipeline, const char *field, bool ascending);
+
+int32_t hk_pipeline_limit(struct HK_Pipeline *pipeline, uintptr_t limit);
+
+int32_t hk_pipeline_offset(struct HK_Pipeline *pipeline, uintptr_t offset);
+
+int32_t hk_pipeline_unwind(struct HK_Pipeline *pipeline, const char *field);
+
+/**
+ * `key` may be NULL for a single global group.
+ * `accums_json`: `[{"out":"total","op":"sum","field":"items.qty"},
+ * {"out":"n","op":"count"}]`. `field` is ignored by `count`.
+ */
+int32_t hk_pipeline_group(struct HK_Pipeline *pipeline, const char *key, const char *accums_json);
+
+/**
+ * Run the pipeline; returns a JSON array of result documents (caller frees
+ * with `hk_string_free`).
+ */
+char *hk_pipeline_execute(struct HK_Engine *engine, const struct HK_Pipeline *pipeline);
+
+/**
+ * Run the pipeline and return owned doc handles (mirrors
+ * `hk_query_execute_to_handles`; release with `hk_result_set_free`).
+ */
+struct HK_ResultSet *hk_pipeline_execute_to_handles(struct HK_Engine *engine,
+                                                    const struct HK_Pipeline *pipeline);
+
 struct HK_Transaction *hk_transaction_begin(struct HK_Engine *engine);
 
 struct HK_Doc *hk_transaction_get(struct HK_Engine *engine,
@@ -680,6 +832,27 @@ int32_t hk_transaction_set(struct HK_Transaction *tx,
                            const char *collection,
                            const char *doc_id,
                            const struct HK_Doc *doc);
+
+/**
+ * Patch inside the transaction (issue #71/F5 item 5): the doc version joins
+ * the read-set, then the updates are applied at commit.
+ * `updates_json`: `{"field": <json>, ...}` (top-level fields).
+ */
+int32_t hk_transaction_patch(struct HK_Engine *engine,
+                             struct HK_Transaction *tx,
+                             const char *collection,
+                             const char *doc_id,
+                             const char *updates_json);
+
+/**
+ * Read many docs into the transaction read-set. Returns a JSON array with
+ * one entry per id (`null` when absent). Caller frees with
+ * `hk_string_free`.
+ */
+char *hk_transaction_get_many(struct HK_Engine *engine,
+                              struct HK_Transaction *tx,
+                              const char *collection,
+                              const char *ids_json);
 
 int32_t hk_transaction_commit(struct HK_Engine *engine, struct HK_Transaction *tx);
 
