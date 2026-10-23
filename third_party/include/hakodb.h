@@ -257,6 +257,13 @@ int32_t hk_engine_insert_take(struct HK_Engine *engine,
 struct HK_Doc *hk_engine_get(struct HK_Engine *engine, const char *collection, const char *doc_id);
 
 /**
+ * Point-read JSON straight from the pinned bytes; blob links are resolved
+ * so the output matches `hk_engine_get` + `hk_doc_to_json`. Caller frees
+ * with `hk_string_free`.
+ */
+char *hk_engine_get_json(struct HK_Engine *engine, const char *collection, const char *doc_id);
+
+/**
  * Atomic `(doc, version)`: both are captured under one shard read, so an
  * RMW loop cannot pair a new version with a stale doc (issue #71/F5 item
  * 3). `out_version` may be NULL; it receives 0 when the doc is absent.
@@ -448,6 +455,14 @@ int32_t hk_query_select_field(struct HK_Query *query, const char *field);
 char *hk_query_execute(struct HK_Engine *engine, const struct HK_Query *query);
 
 /**
+ * Query rows as one JSON array string, emitted from pinned bytes (no owned
+ * `HakoDoc`). Output matches `hk_query_execute`; projections reuse that
+ * path because the projected executor has its own field shape. Caller
+ * frees with `hk_string_free`.
+ */
+char *hk_query_execute_json(struct HK_Engine *engine, const struct HK_Query *query);
+
+/**
  * F7: plan explanation without executing the query. Returns JSON
  * (`ExplainReport`: scan/index, counts, covering, available indexes).
  * Caller frees with `hk_string_free`.
@@ -506,6 +521,16 @@ int64_t hk_cursor_walk(struct HK_Engine *engine,
                        HkWalkCallback callback,
                        void *userdata);
 
+/**
+ * JSON row callback: same signature as `hk_cursor_walk`, but `bytes` is
+ * UTF-8 JSON rather than storage framing. Rows are materialized by
+ * `walk_json`; `false` stops early. Returns rows visited, -1 on error.
+ */
+int64_t hk_cursor_walk_json(struct HK_Engine *engine,
+                            const struct HK_Query *query,
+                            HkWalkCallback callback,
+                            void *userdata);
+
 struct HK_ViewDoc *hk_view_get(struct HK_Engine *engine,
                                const char *collection,
                                const char *doc_id);
@@ -536,11 +561,41 @@ const uint8_t *hk_view_get_bytes(const struct HK_ViewDoc *view,
                                  const char *key,
                                  uintptr_t *len_out);
 
+bool hk_view_get_path_int(const struct HK_ViewDoc *view, const char *path, int64_t *out);
+
+bool hk_view_get_path_float(const struct HK_ViewDoc *view, const char *path, double *out);
+
+int32_t hk_view_get_path_bool(const struct HK_ViewDoc *view, const char *path);
+
+/**
+ * Borrowed UTF-8 at a dotted path. Same lifetime contract as
+ * `hk_view_get_str`.
+ */
+const char *hk_view_get_path_str(const struct HK_ViewDoc *view,
+                                 const char *path,
+                                 uintptr_t *len_out);
+
+/**
+ * Borrowed Binary at a dotted path. Same lifetime contract as
+ * `hk_view_get_bytes`.
+ */
+const uint8_t *hk_view_get_path_bytes(const struct HK_ViewDoc *view,
+                                      const char *path,
+                                      uintptr_t *len_out);
+
 /**
  * Escape hatch: full owned decode of the pinned bytes (links unresolved —
  * follow with hk_doc_resolve_blobs when needed).
  */
 struct HK_Doc *hk_view_to_doc(const struct HK_ViewDoc *view, const char *doc_id);
+
+/**
+ * Full JSON from the pinned view bytes, no owned decode. Blob links stay
+ * as `{"__blob__":...}` (a view cannot inflate); use `hk_engine_get_json`
+ * when resolved blob values are required. Caller frees with
+ * `hk_string_free`.
+ */
+char *hk_view_to_json(const struct HK_ViewDoc *view);
 
 /**
  * One-call lazy scan: lends each row as a view (no decode, no owned
@@ -652,21 +707,41 @@ uint32_t hk_engine_create_index(struct HK_Engine *engine,
                                 const char *fields_json);
 
 /**
+ * Drops a composite index by id (idempotent). Returns 0 on success,
+ * -1 when the id belongs to another collection or the drop fails.
+ */
+int32_t hk_engine_drop_composite_index(struct HK_Engine *engine,
+                                       const char *collection,
+                                       uint32_t id);
+
+/**
  * Simplified indexer: Create an index for a single field.
  */
 int32_t hk_engine_create_simple_index(struct HK_Engine *engine,
                                       const char *collection,
                                       const char *field);
 
+int32_t hk_engine_drop_simple_index(struct HK_Engine *engine,
+                                    const char *collection,
+                                    const char *field);
+
 int32_t hk_engine_create_fts_index(struct HK_Engine *engine,
                                    const char *collection,
                                    const char *field);
+
+int32_t hk_engine_drop_fts_index(struct HK_Engine *engine,
+                                 const char *collection,
+                                 const char *field);
 
 int32_t hk_engine_create_vector_index(struct HK_Engine *engine,
                                       const char *collection,
                                       const char *field,
                                       uint32_t dim,
                                       uint32_t metric);
+
+int32_t hk_engine_drop_vector_index(struct HK_Engine *engine,
+                                    const char *collection,
+                                    const char *field);
 
 int32_t hk_query_where_near(struct HK_Query *query,
                             const char *field,
@@ -695,6 +770,8 @@ char *hk_engine_find_near(struct HK_Engine *engine,
  * tracked from here on (live writes + backfill). Idempotent.
  */
 int32_t hk_engine_create_traverse_index(struct HK_Engine *engine, const char *collection);
+
+int32_t hk_engine_drop_traverse_index(struct HK_Engine *engine, const char *collection);
 
 /**
  * Graph-traversal marker on a query (issue #53): BFS from
@@ -729,6 +806,8 @@ char *hk_engine_find_paths(struct HK_Engine *engine,
  * Idempotent.
  */
 int32_t hk_engine_create_edge_index(struct HK_Engine *engine, const char *collection);
+
+int32_t hk_engine_drop_edge_index(struct HK_Engine *engine, const char *collection);
 
 /**
  * Weighted shortest paths (Phase B): Dijkstra over inline refs +
@@ -972,6 +1051,10 @@ struct HK_CloudSync *hk_cloud_sync_client_new(struct HK_Engine *engine,
 
 int32_t hk_cloud_sync_start(struct HK_CloudSync *cloud_sync, const char *address);
 
+/**
+ * Redacted status JSON: mode, connected, room_name, active_clients, and
+ * queued_writes. The room key is never included.
+ */
 char *hk_cloud_sync_status(struct HK_CloudSync *cloud_sync);
 
 void hk_cloud_sync_stop(struct HK_CloudSync *cloud_sync);

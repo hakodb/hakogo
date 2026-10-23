@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hakodb/hako-go/hako"
+	"github.com/hakodb/hakogo/hako"
 )
 
 func main() {
