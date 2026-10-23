@@ -26,6 +26,10 @@ static inline int64_t hako_view_walk_register(HK_Engine* engine, const HK_Query*
 	// lends the view for the call, Go must not retain the handle.
 	return hk_cursor_walk_view(engine, query, (HkViewWalkCallback)hakoViewWalkBridge, user_data);
 }
+static inline int64_t hako_json_walk_register(HK_Engine* engine, const HK_Query* query, void* user_data) {
+	// Same bridge as the byte walk: the payload is UTF-8 JSON rows.
+	return hk_cursor_walk_json(engine, query, (HkWalkCallback)hakoWalkBridge, user_data);
+}
 */
 import "C"
 
@@ -400,6 +404,23 @@ func (e *Engine) GetDoc(collection, docID string) (*Doc, error) {
 		return nil, nil
 	}
 	return &Doc{ptr: ptr}, nil
+}
+
+// GetJSON point-reads the document as JSON serialized straight from the
+// pinned bytes (core 0.18+): no owned doc handle, blob links resolved, so
+// the bytes match GetDoc + Doc.JSON. A missing document returns "" with a
+// nil error — the same null-handle contract as GetDoc.
+func (e *Engine) GetJSON(collection, docID string) (string, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	defer fc()
+	defer fi()
+	ptr := C.hk_engine_get_json(e.ptr, cc, ci)
+	if ptr == nil {
+		return "", nil
+	}
+	defer C.hk_string_free(ptr)
+	return C.GoString(ptr), nil
 }
 
 func (e *Engine) Delete(collection, docID string) error {
@@ -1219,6 +1240,13 @@ func (e *Engine) ExecuteQuery(q *Query) (string, error) {
 	return ownedCStringJSON(func() *C.char { return C.hk_query_execute(e.ptr, q.ptr) })
 }
 
+// ExecuteQueryJSON runs the query and serializes the rows from pinned bytes
+// (core 0.18+): byte-identical to ExecuteQuery, no owned docs. Projection
+// queries keep the projected executor's shape.
+func (e *Engine) ExecuteQueryJSON(q *Query) (string, error) {
+	return ownedCStringJSON(func() *C.char { return C.hk_query_execute_json(e.ptr, q.ptr) })
+}
+
 // ExplainQuery returns the query plan JSON (F7).
 func (e *Engine) ExplainQuery(q *Query) (string, error) {
 	return ownedCStringJSON(func() *C.char { return C.hk_query_explain(e.ptr, q.ptr) })
@@ -1617,6 +1645,90 @@ func (d *ViewDoc) ToDoc(docID string) (*Doc, error) {
 	return &Doc{ptr: ptr}, nil
 }
 
+// ToJSON serializes the pinned bytes straight to JSON, no owned decode
+// (core 0.18+). Blob links stay as {"__blob__":...}: a view never inflates;
+// use Engine.GetJSON when resolved blob values are required.
+func (d *ViewDoc) ToJSON() (string, error) {
+	if d == nil || d.ptr == nil {
+		return "", errors.New("view doc is nil")
+	}
+	return ownedCStringJSON(func() *C.char { return C.hk_view_to_json(d.ptr) })
+}
+
+// GetPathInt reads an Int at a dotted path ("a.b.c"); a single segment
+// reads a top-level field. (core 0.18+)
+func (d *ViewDoc) GetPathInt(path string) (int64, bool) {
+	if d == nil || d.ptr == nil {
+		return 0, false
+	}
+	cp, free := cString(path)
+	defer free()
+	var out C.int64_t
+	if !bool(C.hk_view_get_path_int(d.ptr, cp, &out)) {
+		return 0, false
+	}
+	return int64(out), true
+}
+
+func (d *ViewDoc) GetPathFloat(path string) (float64, bool) {
+	if d == nil || d.ptr == nil {
+		return 0, false
+	}
+	cp, free := cString(path)
+	defer free()
+	var out C.double
+	if !bool(C.hk_view_get_path_float(d.ptr, cp, &out)) {
+		return 0, false
+	}
+	return float64(out), true
+}
+
+func (d *ViewDoc) GetPathBool(path string) (bool, bool) {
+	if d == nil || d.ptr == nil {
+		return false, false
+	}
+	cp, free := cString(path)
+	defer free()
+	switch v := C.hk_view_get_path_bool(d.ptr, cp); v {
+	case 1:
+		return true, true
+	case 0:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// GetPathString returns a copy of the String at a dotted path.
+func (d *ViewDoc) GetPathString(path string) (string, bool) {
+	if d == nil || d.ptr == nil {
+		return "", false
+	}
+	cp, free := cString(path)
+	defer free()
+	var ln C.uintptr_t
+	ptr := C.hk_view_get_path_str(d.ptr, cp, &ln)
+	if ptr == nil {
+		return "", false
+	}
+	return C.GoStringN(ptr, C.int(ln)), true
+}
+
+// GetPathBytes returns a copy of the Binary at a dotted path.
+func (d *ViewDoc) GetPathBytes(path string) ([]byte, bool) {
+	if d == nil || d.ptr == nil {
+		return nil, false
+	}
+	cp, free := cString(path)
+	defer free()
+	var ln C.uintptr_t
+	ptr := C.hk_view_get_path_bytes(d.ptr, cp, &ln)
+	if ptr == nil {
+		return nil, false
+	}
+	return C.GoBytes(unsafe.Pointer(ptr), C.int(ln)), true
+}
+
 // ViewWalkCallback receives one row per call as a borrowed view handle
 // (valid for the call only); return false to stop early.
 type ViewWalkCallback func(id string, view *ViewDoc) bool
@@ -1642,6 +1754,22 @@ func (e *Engine) CursorWalkView(q *Query, callback ViewWalkCallback) (int64, err
 	n := C.hako_view_walk_register(e.ptr, q.ptr, unsafe.Pointer(h))
 	if n < 0 {
 		return -1, fmt.Errorf("hk_cursor_walk_view failed: %s", lastError())
+	}
+	return int64(n), nil
+}
+
+// CursorWalkJSON is CursorWalk with JSON rows (core 0.18+): the callback
+// receives each row as UTF-8 JSON bytes. Rows are materialized, so this is
+// not the zero-alloc raw walk.
+func (e *Engine) CursorWalkJSON(q *Query, callback WalkCallback) (int64, error) {
+	if callback == nil {
+		return -1, errors.New("walk callback is nil")
+	}
+	h := cgo.NewHandle(callback)
+	defer h.Delete()
+	n := C.hako_json_walk_register(e.ptr, q.ptr, unsafe.Pointer(h))
+	if n < 0 {
+		return -1, fmt.Errorf("hk_cursor_walk_json failed: %s", lastError())
 	}
 	return int64(n), nil
 }

@@ -1,3 +1,3 @@
-module github.com/hakodb/hako-go
+module github.com/hakodb/hakogo
 
 go 1.22
