@@ -1236,6 +1236,16 @@ func (q *Query) AggregateAvg(field string) error {
 	defer ff()
 	return checkStatus("hk_query_aggregate_avg", C.hk_query_aggregate_avg(q.ptr, cf))
 }
+func (q *Query) AggregateMin(field string) error {
+	cf, ff := cString(field)
+	defer ff()
+	return checkStatus("hk_query_aggregate_min", C.hk_query_aggregate_min(q.ptr, cf))
+}
+func (q *Query) AggregateMax(field string) error {
+	cf, ff := cString(field)
+	defer ff()
+	return checkStatus("hk_query_aggregate_max", C.hk_query_aggregate_max(q.ptr, cf))
+}
 func (e *Engine) ExecuteQuery(q *Query) (string, error) {
 	return ownedCStringJSON(func() *C.char { return C.hk_query_execute(e.ptr, q.ptr) })
 }
