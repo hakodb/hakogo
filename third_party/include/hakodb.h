@@ -651,6 +651,10 @@ int32_t hk_query_aggregate_sum(struct HK_Query *query, const char *field);
 
 int32_t hk_query_aggregate_avg(struct HK_Query *query, const char *field);
 
+int32_t hk_query_aggregate_min(struct HK_Query *query, const char *field);
+
+int32_t hk_query_aggregate_max(struct HK_Query *query, const char *field);
+
 char *hk_query_execute_aggregation(struct HK_Engine *engine, const struct HK_Query *query);
 
 int32_t hk_doc_insert_timestamp(struct HK_Doc *doc, const char *key, int64_t micros);
