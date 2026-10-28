@@ -460,6 +460,73 @@ func (e *Engine) DeleteLocal(collection, docID string) error {
 	return checkStatus("hk_engine_delete_local", C.hk_engine_delete_local(e.ptr, cc, ci))
 }
 
+// DeleteEx deletes with an explicit mode: 0 = soft (tombstone + retention
+// record in __hako_softdel, restoreable via Restore until the sweeper
+// purges it), non-zero = force (legacy tombstone-only). Delete is soft
+// since core 0.20.0.
+func (e *Engine) DeleteEx(collection, docID string, force bool) error {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	defer fc()
+	defer fi()
+	mode := C.int(0)
+	if force {
+		mode = 1
+	}
+	return checkStatus("hk_engine_delete_ext", C.hk_engine_delete_ext(e.ptr, cc, ci, mode))
+}
+
+// DeleteForce is DeleteEx with force=true (legacy hard delete).
+func (e *Engine) DeleteForce(collection, docID string) error {
+	return e.DeleteEx(collection, docID, true)
+}
+
+// Restore re-creates a soft-deleted doc from its retention record (fresh
+// version) and consumes the record. Refuses when the id was re-put (the
+// cancel rule) or no record exists.
+func (e *Engine) Restore(collection, docID string) error {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	defer fc()
+	defer fi()
+	return checkStatus("hk_engine_restore", C.hk_engine_restore(e.ptr, cc, ci))
+}
+
+// RestoreAvailableJSON lists restoreable records as a JSON array
+// ([{"col","id","deleted_at","scheduled_at","bytes"}]); an empty
+// collection lists every collection.
+func (e *Engine) RestoreAvailableJSON(collection string) (string, error) {
+	var cc *C.char
+	if collection != "" {
+		p, free := cString(collection)
+		defer free()
+		cc = p
+	}
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_restore_available(e.ptr, cc) })
+}
+
+// DeleteQueueJSON lists due-for-sweep records as a JSON array (same shape
+// as RestoreAvailableJSON); an empty collection lists every collection.
+func (e *Engine) DeleteQueueJSON(collection string) (string, error) {
+	var cc *C.char
+	if collection != "" {
+		p, free := cString(collection)
+		defer free()
+		cc = p
+	}
+	return ownedCStringJSON(func() *C.char { return C.hk_engine_delete_queue(e.ptr, cc) })
+}
+
+// SweepNow runs one retention sweep pass and returns the number of
+// records purged.
+func (e *Engine) SweepNow() (int32, error) {
+	n := C.hk_engine_sweep_now(e.ptr)
+	if n < 0 {
+		return 0, fmt.Errorf("hk_engine_sweep_now failed: %s", lastError())
+	}
+	return int32(n), nil
+}
+
 // SetCollectionLocal marks a collection local-only (never syncs) or, with
 // local=false, rejoins it to sync.
 func (e *Engine) SetCollectionLocal(collection string, local bool) error {
@@ -1099,6 +1166,21 @@ func (b *Batch) Delete(collection, docID string) error {
 	defer fc()
 	defer fi()
 	return checkStatus("hk_batch_delete", C.hk_batch_delete(b.ptr, cc, ci))
+}
+
+// DeleteEx queues a delete with an explicit mode: 0 = soft (restoreable
+// via Engine.Restore), non-zero = force (legacy). hk_batch_delete stays
+// legacy/force for frozen-contract consumers.
+func (b *Batch) DeleteEx(collection, docID string, force bool) error {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	defer fc()
+	defer fi()
+	mode := C.int(0)
+	if force {
+		mode = 1
+	}
+	return checkStatus("hk_batch_delete_ext", C.hk_batch_delete_ext(b.ptr, cc, ci, mode))
 }
 
 // SetJSON stages a JSON document on the batch without Doc plumbing.

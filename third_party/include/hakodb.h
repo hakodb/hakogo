@@ -294,6 +294,38 @@ struct HK_Doc *hk_engine_get_versioned(struct HK_Engine *engine,
 int32_t hk_engine_delete(struct HK_Engine *engine, const char *collection, const char *doc_id);
 
 /**
+ * #177: delete with an explicit mode - 0 = soft (tombstone + retention
+ * record, restoreable via hk_engine_restore), non-zero = force (legacy
+ * tombstone-only).
+ */
+int32_t hk_engine_delete_ext(struct HK_Engine *engine,
+                             const char *collection,
+                             const char *doc_id,
+                             int32_t mode);
+
+/**
+ * #177: restore a soft-deleted doc from its retention record.
+ */
+int32_t hk_engine_restore(struct HK_Engine *engine, const char *collection, const char *doc_id);
+
+/**
+ * #177: restoreable records as a JSON array (owned string; free with
+ * hk_string_free). `collection` may be NULL for all collections.
+ */
+char *hk_engine_restore_available(struct HK_Engine *engine, const char *collection);
+
+/**
+ * #177: due-for-sweep subset as a JSON array (owned string; free with
+ * hk_string_free). `collection` may be NULL for all collections.
+ */
+char *hk_engine_delete_queue(struct HK_Engine *engine, const char *collection);
+
+/**
+ * #177: run one sweep pass now; returns the purged count (-1 on error).
+ */
+int32_t hk_engine_sweep_now(struct HK_Engine *engine);
+
+/**
  * Local-only delete: marks the key so no sync tailer or handshake
  * catch-up ever transmits it, then deletes normally (fresh tombstone
  * timestamp keeps the version clock advanced — handshake-stable).
@@ -378,6 +410,16 @@ int32_t hk_batch_set_json(struct HK_Batch *batch,
                           const char *json);
 
 int32_t hk_batch_delete(struct HK_Batch *batch, const char *collection, const char *doc_id);
+
+/**
+ * #177: batch delete with an explicit mode - 0 = soft (tombstone +
+ * retention record), non-zero = force (legacy tombstone-only). The
+ * existing hk_batch_delete keeps its legacy (force) behavior.
+ */
+int32_t hk_batch_delete_ext(struct HK_Batch *batch,
+                            const char *collection,
+                            const char *doc_id,
+                            int32_t mode);
 
 int32_t hk_batch_commit(struct HK_Engine *engine, struct HK_Batch *batch);
 
