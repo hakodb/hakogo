@@ -20,10 +20,18 @@
 #define DELETE 2
 
 /**
- * Hard depth cap: traversals always terminate (cycles via visited set,
- * depth via this). Generous — real queries stop far earlier.
+ * Default depth guidance: traversals always terminate (cycles via the
+ * visited set, depth via the cap below). Generous — real queries stop far
+ * earlier.
  */
 #define MAX_TRAVERSE_DEPTH 32
+
+/**
+ * Hard caller-facing cap (#156 Phase C): depth may be raised up to this
+ * (memory of the walk is O(visited) — the bound exists so a deep walk on
+ * a wide graph cannot balloon unbounded; default guidance stays 32).
+ */
+#define MAX_TRAVERSE_DEPTH_CAP 256
 
 /**
  * Max dims per index (Turso allows 65536; embedded starts tighter —
@@ -254,6 +262,16 @@ int32_t hk_engine_insert_take(struct HK_Engine *engine,
                               const char *doc_id,
                               struct HK_Doc *doc);
 
+/**
+ * Single-call JSON insert (W4, #143): builds the doc from a JSON object
+ * string and puts it — replaces the hk_doc_new + N×hk_doc_insert_*
+ * + hk_engine_insert chain per document on the client side.
+ */
+int32_t hk_engine_insert_json(struct HK_Engine *engine,
+                              const char *collection,
+                              const char *doc_id,
+                              const char *json);
+
 struct HK_Doc *hk_engine_get(struct HK_Engine *engine, const char *collection, const char *doc_id);
 
 /**
@@ -348,6 +366,16 @@ int32_t hk_batch_set(struct HK_Batch *batch,
                      const char *collection,
                      const char *doc_id,
                      struct HK_Doc *doc);
+
+/**
+ * Single-call JSON batch set (W4, #143): builds the doc from a JSON object
+ * string and queues it on the batch — the batch-construction twin of
+ * [`hk_engine_insert_json`].
+ */
+int32_t hk_batch_set_json(struct HK_Batch *batch,
+                          const char *collection,
+                          const char *doc_id,
+                          const char *json);
 
 int32_t hk_batch_delete(struct HK_Batch *batch, const char *collection, const char *doc_id);
 
@@ -743,6 +771,20 @@ int32_t hk_engine_create_vector_index(struct HK_Engine *engine,
                                       uint32_t dim,
                                       uint32_t metric);
 
+/**
+ * Vector index with explicit HNSW parameters (#141-1). Pass 0 for a
+ * parameter to ride the per-dim derived default. Additive to
+ * `hk_engine_create_vector_index` (unchanged; derived defaults).
+ */
+int32_t hk_engine_create_vector_index_v2(struct HK_Engine *engine,
+                                         const char *collection,
+                                         const char *field,
+                                         uint32_t dim,
+                                         uint32_t metric,
+                                         uintptr_t m,
+                                         uintptr_t ef_construction,
+                                         uintptr_t ef_search);
+
 int32_t hk_engine_drop_vector_index(struct HK_Engine *engine,
                                     const char *collection,
                                     const char *field);
@@ -790,10 +832,10 @@ int32_t hk_query_where_traverse(struct HK_Query *query,
                                 uintptr_t max_depth);
 
 /**
- * One-shot graph BFS for FFI consumers: nearest-first is meaningless
- * here — hits ride BFS order as `[{"collection","id","depth","doc"}]`
- * (owned string, `hk_string_free`). Missing anchor = `"[]"`
- * (fail-closed); incoming into untracked = null + `hk_last_error`.
+ * One-shot graph BFS for FFI consumers: hits ride BFS order as
+ * `[{"collection","id","depth","cost","path","doc"}]` (owned string,
+ * `hk_string_free`). Missing anchor = `"[]"` (fail-closed); incoming
+ * into untracked = null + `hk_last_error`.
  */
 char *hk_engine_find_paths(struct HK_Engine *engine,
                            const char *collection,
@@ -802,6 +844,181 @@ char *hk_engine_find_paths(struct HK_Engine *engine,
                            const char *edge_field,
                            uintptr_t max_depth,
                            uintptr_t k);
+
+/**
+ * Filtered graph BFS (#156 Phase C): like `hk_engine_find_paths` plus a
+ * node predicate — `filter_field` + `filter_json` (a single JSON value,
+ * e.g. `"5"`, `true`, `"a"`) keep only nodes whose field equals it, and
+ * prune descent into non-matching nodes (the walk cannot route through
+ * filtered territory). Nulls on both = no filter (≡ v1). Stored as
+ * `path: ["col/id", …]`, start-inclusive.
+ */
+char *hk_engine_find_paths_v2(struct HK_Engine *engine,
+                              const char *collection,
+                              const char *doc_id,
+                              uint32_t direction,
+                              const char *edge_field,
+                              uintptr_t max_depth,
+                              uintptr_t k,
+                              const char *filter_field,
+                              const char *filter_json);
+
+/**
+ * Bounded simple-path enumeration (#156 Phase C): best-first routes with
+ * no node repeated inside one path, cost-ordered (hop count without a
+ * `weight_field`, weight sum with), until `k` serves. Routes, not node
+ * hits: two routes to the same node are rows here. `filter_field` +
+ * `filter_json` prune like `hk_engine_find_paths_v2` (nulls = no filter).
+ */
+char *hk_engine_find_simple_paths(struct HK_Engine *engine,
+                                  const char *collection,
+                                  const char *doc_id,
+                                  uint32_t direction,
+                                  const char *edge_field,
+                                  const char *via_edge,
+                                  const char *weight_field,
+                                  uintptr_t max_depth,
+                                  uintptr_t k,
+                                  const char *filter_field,
+                                  const char *filter_json);
+
+/**
+ * Typed/filtered edge-collection BFS (#156 Phase F-1, #140-7): anchors a
+ * walk on `via_edge`-style relationships with first-class edge predicates.
+ * `via_edge` names the relationship layer (required for the predicates to
+ * have anything to bite on — inline refs have no edge doc). `type_field`
+ * and `type_json` name the relationship routing (an equality predicate on
+ * the edge doc); `match_field` with `match_json` filters on any edge
+ * property; both apply to edge-collection hops (AND when both set),
+ * inline-ref hops are exempt. `filter_field` and `filter_json` prune
+ * nodes like `hk_engine_find_paths_v2`. Rows gain an additive `"via"`
+ * array — the edge doc that connected each hop, null for inline hops.
+ * v3 exists only to extend the frozen v2 signature (additive C ABI).
+ */
+char *hk_engine_find_paths_v3(struct HK_Engine *engine,
+                              const char *collection,
+                              const char *doc_id,
+                              uint32_t direction,
+                              const char *edge_field,
+                              const char *via_edge,
+                              uintptr_t max_depth,
+                              uintptr_t k,
+                              const char *filter_field,
+                              const char *filter_json,
+                              const char *type_field,
+                              const char *type_json,
+                              const char *match_field,
+                              const char *match_json);
+
+/**
+ * Simple-path enumeration with edge predicates (#156 Phase F-1, #140-7):
+ * `hk_engine_find_simple_paths` plus `type_field`/`type_json` (relationship
+ * routing) and `match_field`/`match_json` (edge-property filter), same
+ * semantics as `hk_engine_find_paths_v3`. Rows keep the additive `"via"`
+ * array. v2 exists only to extend the frozen v1 signature.
+ */
+char *hk_engine_find_simple_paths_v2(struct HK_Engine *engine,
+                                     const char *collection,
+                                     const char *doc_id,
+                                     uint32_t direction,
+                                     const char *edge_field,
+                                     const char *via_edge,
+                                     const char *weight_field,
+                                     uintptr_t max_depth,
+                                     uintptr_t k,
+                                     const char *filter_field,
+                                     const char *filter_json,
+                                     const char *type_field,
+                                     const char *type_json,
+                                     const char *match_field,
+                                     const char *match_json);
+
+/**
+ * Traverse rows with opt-in route projections (G1, #168): everything
+ * `hk_engine_find_paths_v3` serves, plus `include_path`/`include_via`
+ * (1 = rows gain the additive `"path"` discovery array / `"via"` edge-doc
+ * array — null for inline hops; 0 = rows keep the frozen v0.19.3 shape,
+ * byte-for-byte, no route keys). The engine skips the matching machinery
+ * per flag (measured −27% BFS_qps when always-on, see #168). Frozen
+ * v1/v2/v3 stay route-free; v4 is the only route-carrying generation.
+ */
+char *hk_engine_find_paths_v4(struct HK_Engine *engine,
+                              const char *collection,
+                              const char *doc_id,
+                              uint32_t direction,
+                              const char *edge_field,
+                              const char *via_edge,
+                              uintptr_t max_depth,
+                              uintptr_t k,
+                              uint32_t include_path,
+                              uint32_t include_via,
+                              const char *filter_field,
+                              const char *filter_json,
+                              const char *type_field,
+                              const char *type_json,
+                              const char *match_field,
+                              const char *match_json);
+
+/**
+ * Simple paths with opt-in route projections (G1, #168): everything
+ * `hk_engine_find_simple_paths_v2` serves, plus `include_path`/`include_via`
+ * (1 = rows gain the additive `"path"`/`"via"` arrays; 0 = frozen v0.19.3
+ * shape). The engine skips the matching machinery per flag. Frozen
+ * v1/simple_v2 stay route-free.
+ */
+char *hk_engine_find_simple_paths_v3(struct HK_Engine *engine,
+                                     const char *collection,
+                                     const char *doc_id,
+                                     uint32_t direction,
+                                     const char *edge_field,
+                                     const char *via_edge,
+                                     const char *weight_field,
+                                     uintptr_t max_depth,
+                                     uintptr_t k,
+                                     uint32_t include_path,
+                                     uint32_t include_via,
+                                     const char *filter_field,
+                                     const char *filter_json,
+                                     const char *type_field,
+                                     const char *type_json,
+                                     const char *match_field,
+                                     const char *match_json);
+
+/**
+ * Whole-collection graph analytics (#156 Phase E): one op over the
+ * collection's node set plus its traversal edges (`edge_field`,
+ * `via_edge` route like the walks; `filter_field`/`filter_json` prune
+ * with Phase C semantics). `op` is one of `"components"`, `"cycle"`,
+ * `"topo"`, `"degrees"` — lowercase, exact. JSON shapes:
+ *   components → [["a/b","c/d"], …]  members sorted, comps by min id
+ *   cycle      → ["a","b","c"] (one directed cycle) or null
+ *   topo       → ["a","b","c"] (Kahn, deterministic) or null on cycle
+ *   degrees    → [{"node":"a","in":1,"out":2}, …]  total-degree desc
+ * Cross-collection targets never join the graph; an unknown op is a
+ * loud error. Owned string (`hk_string_free`).
+ */
+char *hk_engine_graph_analysis(struct HK_Engine *engine,
+                               const char *collection,
+                               const char *op,
+                               uint32_t direction,
+                               const char *edge_field,
+                               const char *via_edge,
+                               const char *filter_field,
+                               const char *filter_json);
+
+/**
+ * Viz export (#156 Phase E): the collection graph as one JSON document
+ * `{"nodes":[{"collection","id","doc"}],"edges":[{"from","to"}]}` —
+ * same node set/edge rules as `hk_engine_graph_analysis` (cycle among
+ * them: docs inline, edges plain strings). Owned string.
+ */
+char *hk_engine_export_graph(struct HK_Engine *engine,
+                             const char *collection,
+                             uint32_t direction,
+                             const char *edge_field,
+                             const char *via_edge,
+                             const char *filter_field,
+                             const char *filter_json);
 
 /**
  * Register an edge collection (issue #53, Phase B): tracks it for

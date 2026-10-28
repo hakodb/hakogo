@@ -116,6 +116,13 @@ func cString(v string) (*C.char, func()) {
 	return cv, func() { C.free(unsafe.Pointer(cv)) }
 }
 
+func b32(b bool) C.uint32_t {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func Open(path string) (*Engine, error) {
 	cp, free := cString(path)
 	defer free()
@@ -385,6 +392,18 @@ func (e *Engine) InsertTake(collection, docID string, doc *Doc) error {
 	err := checkStatus("hk_engine_insert_take", C.hk_engine_insert_take(e.ptr, cc, ci, doc.ptr))
 	doc.ptr = nil
 	return err
+}
+
+// InsertJSON parses a JSON document and inserts it in one hop — no Doc
+// handle plumbing. Same parse/dup contract as insert.
+func (e *Engine) InsertJSON(collection, docID, docJSON string) error {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	cj, fj := cString(docJSON)
+	defer fc()
+	defer fi()
+	defer fj()
+	return checkStatus("hk_engine_insert_json", C.hk_engine_insert_json(e.ptr, cc, ci, cj))
 }
 
 // ResolveBlobs hydrates deferred blob fields of a query-returned doc.
@@ -784,6 +803,17 @@ func (e *Engine) CreateVectorIndex(collection, field string, dim uint32, metric 
 	return checkStatus("hk_engine_create_vector_index", C.hk_engine_create_vector_index(e.ptr, cc, cf, C.uint32_t(dim), C.uint32_t(metric)))
 }
 
+// CreateVectorIndexV2 tunes the HNSW graph on top of CreateVectorIndex:
+// m = max edges per node, efConstruction = build-beam width, efSearch =
+// query-beam width (0 = engine default for each).
+func (e *Engine) CreateVectorIndexV2(collection, field string, dim uint32, metric VectorMetric, m, efConstruction, efSearch uintptr) error {
+	cc, fc := cString(collection)
+	cf, ff := cString(field)
+	defer fc()
+	defer ff()
+	return checkStatus("hk_engine_create_vector_index_v2", C.hk_engine_create_vector_index_v2(e.ptr, cc, cf, C.uint32_t(dim), C.uint32_t(metric), C.uintptr_t(m), C.uintptr_t(efConstruction), C.uintptr_t(efSearch)))
+}
+
 // FindNear runs a one-shot KNN search, nearest-first. A null return
 // (dim mismatch) surfaces as an error via hk_last_error; an unindexed
 // field returns an empty slice (fail-closed, like core find_near).
@@ -827,6 +857,12 @@ type PathHit struct {
 	Depth      int            `json:"depth"`
 	Cost       float64        `json:"cost,omitempty"`
 	Doc        map[string]any `json:"doc"`
+	// Route projections (only decoded when the caller opts in via
+	// PathOpts on FindPathsFull/ShortestPathsFull): "path" lists the
+	// walked nodes as "collection/id"; "via" holds edge docs as JSON
+	// strings, null for anonymous edges.
+	Path []string  `json:"path,omitempty"`
+	Via  []*string `json:"via,omitempty"`
 }
 
 func (e *Engine) CreateTraverseIndex(collection string) error {
@@ -873,6 +909,59 @@ func (e *Engine) FindPaths(collection, docID string, direction TraverseDirection
 	return hits, nil
 }
 
+// PathOpts carries the v0.19 traverse extensions (F-1/G1): node/edge
+// predicates and opt-in route projections. Zero value = frozen v1
+// behavior (no predicates, no path/via in rows). Predicate JSON is an
+// equality value: docs whose <Field> equals it travel/stop; a field
+// without JSON (or vice versa) is an error.
+type PathOpts struct {
+	IncludePath     bool // rows gain "path": ["col/id", ...]
+	IncludeVia      bool // rows gain "via": [<edge doc JSON or null>, ...]
+	NodeFilterField string
+	NodeFilterJSON  string
+	EdgeTypeField   string
+	EdgeTypeJSON    string
+	EdgeMatchField  string
+	EdgeMatchJSON   string
+}
+
+// FindPathsFull is FindPaths with the v0.19 extensions: `via` edge
+// collection hops, node/edge predicates (opts), and opt-in route
+// projections. Zero PathOpts reproduces the FindPaths result shape.
+func (e *Engine) FindPathsFull(collection, docID string, direction TraverseDirection, edge, via string, maxDepth, k int, opts PathOpts) ([]PathHit, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cnf, fnf := optCString(opts.NodeFilterField)
+	cnj, fnj := optCString(opts.NodeFilterJSON)
+	ctf, ftf := optCString(opts.EdgeTypeField)
+	ctj, ftj := optCString(opts.EdgeTypeJSON)
+	cmf, fmf := optCString(opts.EdgeMatchField)
+	cmj, fmj := optCString(opts.EdgeMatchJSON)
+	defer fc()
+	defer fi()
+	defer fe()
+	defer fv()
+	defer fnf()
+	defer fnj()
+	defer ftf()
+	defer ftj()
+	defer fmf()
+	defer fmj()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_find_paths_v4(e.ptr, cc, ci, C.uint32_t(direction), ce, cv, C.uintptr_t(maxDepth), C.uintptr_t(k), b32(opts.IncludePath), b32(opts.IncludeVia), cnf, cnj, ctf, ctj, cmf, cmj)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_find_paths_v4 failed: %w", err)
+	}
+	var hits []PathHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_find_paths_v4 decode: %w", err)
+	}
+	return hits, nil
+}
+
 // ShortestPaths runs weighted Dijkstra over inline refs + the `via`
 // edge collection, cost-ordered. `weight` names the numeric prop on
 // edge docs ("" = uniform 1.0). Same null/empty contract as FindPaths.
@@ -899,6 +988,93 @@ func (e *Engine) ShortestPaths(collection, docID string, direction TraverseDirec
 	}
 	return hits, nil
 }
+
+// ShortestPathsFull is ShortestPaths with the v0.19 extensions:
+// node/edge predicates (opts) and opt-in route projections. Zero
+// PathOpts reproduces the ShortestPaths result shape.
+func (e *Engine) ShortestPathsFull(collection, docID string, direction TraverseDirection, edge, via, weight string, maxDepth, k int, opts PathOpts) ([]PathHit, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cw, fw := optCString(weight)
+	cnf, fnf := optCString(opts.NodeFilterField)
+	cnj, fnj := optCString(opts.NodeFilterJSON)
+	ctf, ftf := optCString(opts.EdgeTypeField)
+	ctj, ftj := optCString(opts.EdgeTypeJSON)
+	cmf, fmf := optCString(opts.EdgeMatchField)
+	cmj, fmj := optCString(opts.EdgeMatchJSON)
+	defer fc()
+	defer fi()
+	defer fe()
+	defer fv()
+	defer fw()
+	defer fnf()
+	defer fnj()
+	defer ftf()
+	defer ftj()
+	defer fmf()
+	defer fmj()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_find_simple_paths_v3(e.ptr, cc, ci, C.uint32_t(direction), ce, cv, cw, C.uintptr_t(maxDepth), C.uintptr_t(k), b32(opts.IncludePath), b32(opts.IncludeVia), cnf, cnj, ctf, ctj, cmf, cmj)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_find_simple_paths_v3 failed: %w", err)
+	}
+	var hits []PathHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_find_simple_paths_v3 decode: %w", err)
+	}
+	return hits, nil
+}
+
+// ExportGraph serializes the collection's ref graph (nodes + edges,
+// narrowed by the same via/filter rules as traversal) as JSON.
+func (e *Engine) ExportGraph(collection string, direction TraverseDirection, edge, via, nodeFilterField, nodeFilterJSON string) (string, error) {
+	cc, fc := cString(collection)
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cnf, fnf := optCString(nodeFilterField)
+	cnj, fnj := optCString(nodeFilterJSON)
+	defer fc()
+	defer fe()
+	defer fv()
+	defer fnf()
+	defer fnj()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_export_graph(e.ptr, cc, C.uint32_t(direction), ce, cv, cnf, cnj)
+	})
+	if err != nil {
+		return "", fmt.Errorf("hk_engine_export_graph failed: %w", err)
+	}
+	return out, nil
+}
+
+// GraphAnalysis runs one whole-graph op over the collection's ref
+// graph: "components" (components as sorted "col/id" member lists),
+// "cycle" (one directed cycle, or null), "topo" (Kahn order, or null
+// on cycle).
+func (e *Engine) GraphAnalysis(collection, op string, direction TraverseDirection, edge, via, nodeFilterField, nodeFilterJSON string) (string, error) {
+	cc, fc := cString(collection)
+	co, fo := cString(op)
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cnf, fnf := optCString(nodeFilterField)
+	cnj, fnj := optCString(nodeFilterJSON)
+	defer fc()
+	defer fo()
+	defer fe()
+	defer fv()
+	defer fnf()
+	defer fnj()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_graph_analysis(e.ptr, cc, co, C.uint32_t(direction), ce, cv, cnf, cnj)
+	})
+	if err != nil {
+		return "", fmt.Errorf("hk_engine_graph_analysis failed: %w", err)
+	}
+	return out, nil
+}
 func (e *Engine) SnapshotIndices() error {
 	return checkStatus("hk_engine_snapshot_indices", C.hk_engine_snapshot_indices(e.ptr))
 }
@@ -923,6 +1099,18 @@ func (b *Batch) Delete(collection, docID string) error {
 	defer fc()
 	defer fi()
 	return checkStatus("hk_batch_delete", C.hk_batch_delete(b.ptr, cc, ci))
+}
+
+// SetJSON stages a JSON document on the batch without Doc plumbing.
+// Same parse contract as Batch.Set.
+func (b *Batch) SetJSON(collection, docID, docJSON string) error {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	cj, fj := cString(docJSON)
+	defer fc()
+	defer fi()
+	defer fj()
+	return checkStatus("hk_batch_set_json", C.hk_batch_set_json(b.ptr, cc, ci, cj))
 }
 func (e *Engine) CommitBatch(batch *Batch) error {
 	return checkStatus("hk_batch_commit", C.hk_batch_commit(e.ptr, batch.ptr))
