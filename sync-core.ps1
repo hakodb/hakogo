@@ -25,7 +25,7 @@ New-Item -ItemType Directory -Force $Inc, $Lib | Out-Null
 function Sync-Header($base, $CoreDir) {
     if ($CoreDir -ne "") {
         $hdr = Join-Path $CoreDir "target\release\hakodb.h"
-        if (-not (Test-Path $hdr)) { throw "no generated header at $hdr (cargo build --release first)" }
+        if (-not (Test-Path $hdr)) { throw "no generated header at $hdr (cargo build --release --features header first)" }
         Copy-Item $hdr $Inc -Force
     } else {
         Invoke-WebRequest -Uri "$base/hakodb.h" -OutFile (Join-Path $Inc "hakodb.h")

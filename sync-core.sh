@@ -18,7 +18,7 @@ done
 if [[ "${1:-}" == "--core-dir" ]]; then
     CORE="$2"
     HDR="$CORE/target/release/hakodb.h"
-    [[ -f "$HDR" ]] || { echo "no generated header at $HDR (cargo build --release first)" >&2; exit 1; }
+    [[ -f "$HDR" ]] || { echo "no generated header at $HDR (cargo build --release --features header first)" >&2; exit 1; }
     cp "$HDR" "$ROOT/third_party/include/"
     SO="$CORE/target/release/libhakodb.so"
     [[ -f "$SO" ]] || { echo "no release .so at $SO (cargo build --release first)" >&2; exit 1; }
