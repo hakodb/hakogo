@@ -872,13 +872,14 @@ func (e *Engine) CreateVectorIndex(collection, field string, dim uint32, metric 
 
 // CreateVectorIndexV2 tunes the HNSW graph on top of CreateVectorIndex:
 // m = max edges per node, efConstruction = build-beam width, efSearch =
-// query-beam width (0 = engine default for each).
-func (e *Engine) CreateVectorIndexV2(collection, field string, dim uint32, metric VectorMetric, m, efConstruction, efSearch uintptr) error {
+// query-beam width (0 = engine default for each), binaryStage1 = popcount
+// stage-1 (core #190; false = int8 stage-1 default).
+func (e *Engine) CreateVectorIndexV2(collection, field string, dim uint32, metric VectorMetric, m, efConstruction, efSearch uintptr, binaryStage1 bool) error {
 	cc, fc := cString(collection)
 	cf, ff := cString(field)
 	defer fc()
 	defer ff()
-	return checkStatus("hk_engine_create_vector_index_v2", C.hk_engine_create_vector_index_v2(e.ptr, cc, cf, C.uint32_t(dim), C.uint32_t(metric), C.uintptr_t(m), C.uintptr_t(efConstruction), C.uintptr_t(efSearch)))
+	return checkStatus("hk_engine_create_vector_index_v2", C.hk_engine_create_vector_index_v2(e.ptr, cc, cf, C.uint32_t(dim), C.uint32_t(metric), C.uintptr_t(m), C.uintptr_t(efConstruction), C.uintptr_t(efSearch), b32(binaryStage1)))
 }
 
 // FindNear runs a one-shot KNN search, nearest-first. A null return
@@ -1141,6 +1142,111 @@ func (e *Engine) GraphAnalysis(collection, op string, direction TraverseDirectio
 		return "", fmt.Errorf("hk_engine_graph_analysis failed: %w", err)
 	}
 	return out, nil
+}
+
+// GraphRAG (core 0.20.5+).
+
+// RankRow is one PageRank row: node as "col/id", score desc then node
+// asc.
+type RankRow struct {
+	Node  string  `json:"node"`
+	Score float64 `json:"score"`
+}
+
+// GraphPagerank runs personalized PageRank (teleport mass 1 - damping
+// on the seed set) over the collection's ref graph; nil/empty seeds =
+// classic PageRank. damping 0 = engine default 0.85; top 0 = all
+// nodes. Seeds are "col/id" strings; entries outside the collection
+// graph are ignored (fail-closed).
+func (e *Engine) GraphPagerank(collection string, seeds []string, direction TraverseDirection, edge, via, nodeFilterField, nodeFilterJSON string, damping float64, top int) ([]RankRow, error) {
+	cc, fc := cString(collection)
+	defer fc()
+	var csj *C.char
+	var fsj func()
+	if len(seeds) > 0 {
+		buf, err := json.Marshal(seeds)
+		if err != nil {
+			return nil, fmt.Errorf("hk_engine_graph_pagerank seeds: %w", err)
+		}
+		csj, fsj = cString(string(buf))
+	} else {
+		fsj = func() {}
+	}
+	defer fsj()
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cnf, fnf := optCString(nodeFilterField)
+	cnj, fnj := optCString(nodeFilterJSON)
+	defer fe()
+	defer fv()
+	defer fnf()
+	defer fnj()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_graph_pagerank(e.ptr, cc, csj, C.uint32_t(direction), ce, cv, cnf, cnj, C.double(damping), C.uintptr_t(top))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_graph_pagerank failed: %w", err)
+	}
+	var rows []RankRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		return nil, fmt.Errorf("hk_engine_graph_pagerank decode: %w", err)
+	}
+	return rows, nil
+}
+
+// Subgraph exports the seed-scoped N-hop neighborhood (same node/edge
+// shape as ExportGraph, scoped by seed) as JSON. maxDepth = hop cap;
+// nodeCap 0 = unlimited. A missing seed returns an empty graph.
+func (e *Engine) Subgraph(collection, seedID string, maxDepth uint32, direction TraverseDirection, edge, via, nodeFilterField, nodeFilterJSON string, nodeCap int) (string, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(seedID)
+	defer fc()
+	defer fi()
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cnf, fnf := optCString(nodeFilterField)
+	cnj, fnj := optCString(nodeFilterJSON)
+	defer fe()
+	defer fv()
+	defer fnf()
+	defer fnj()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_subgraph(e.ptr, cc, ci, C.uint32_t(maxDepth), C.uint32_t(direction), ce, cv, cnf, cnj, C.uintptr_t(nodeCap))
+	})
+	if err != nil {
+		return "", fmt.Errorf("hk_engine_subgraph failed: %w", err)
+	}
+	return out, nil
+}
+
+// HybridSearch fuses the collection's FTS (sparse) and KNN (dense)
+// rankings with Reciprocal Rank Fusion. Rows {id, score (fused, desc),
+// doc}; rrfK 0 = engine default 60. Unindexed either side = the other
+// side's ranking (fail-closed). Needs both an FTS and a vector index.
+func (e *Engine) HybridSearch(collection, textField, textQuery, vecField string, query []float32, k, rrfK int) ([]NearHit, error) {
+	cc, fc := cString(collection)
+	ctf, ftf := cString(textField)
+	ctq, ftq := cString(textQuery)
+	cvf, ffv := cString(vecField)
+	defer fc()
+	defer ftf()
+	defer ftq()
+	defer ffv()
+	var qptr *C.float
+	if len(query) > 0 {
+		qptr = (*C.float)(unsafe.Pointer(&query[0]))
+	}
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_hybrid_search(e.ptr, cc, ctf, ctq, cvf, qptr, C.uintptr_t(len(query)), C.uintptr_t(k), C.uintptr_t(rrfK))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_hybrid_search failed: %w", err)
+	}
+	var hits []NearHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_hybrid_search decode: %w", err)
+	}
+	return hits, nil
 }
 func (e *Engine) SnapshotIndices() error {
 	return checkStatus("hk_engine_snapshot_indices", C.hk_engine_snapshot_indices(e.ptr))

@@ -815,7 +815,8 @@ int32_t hk_engine_create_vector_index(struct HK_Engine *engine,
 
 /**
  * Vector index with explicit HNSW parameters (#141-1). Pass 0 for a
- * parameter to ride the per-dim derived default. Additive to
+ * parameter to ride the per-dim derived default. `binary_stage1` != 0
+ * enables the popcount stage-1 (#190; default int8). Additive to
  * `hk_engine_create_vector_index` (unchanged; derived defaults).
  */
 int32_t hk_engine_create_vector_index_v2(struct HK_Engine *engine,
@@ -825,7 +826,8 @@ int32_t hk_engine_create_vector_index_v2(struct HK_Engine *engine,
                                          uint32_t metric,
                                          uintptr_t m,
                                          uintptr_t ef_construction,
-                                         uintptr_t ef_search);
+                                         uintptr_t ef_search,
+                                         uint32_t binary_stage1);
 
 int32_t hk_engine_drop_vector_index(struct HK_Engine *engine,
                                     const char *collection,
@@ -1061,6 +1063,58 @@ char *hk_engine_export_graph(struct HK_Engine *engine,
                              const char *via_edge,
                              const char *filter_field,
                              const char *filter_json);
+
+/**
+ * Personalized PageRank (#196): teleport mass `1 - damping` on the seed
+ * set (`seeds_json` = null or a JSON array of `"col/id"` strings; null or
+ * empty = classic PageRank with uniform teleport). `damping` 0 = default
+ * 0.85; values outside (0, 1) reject. `top` 0 = all nodes. Output rows:
+ * `{"node": "col/id", "score": f64}` sorted score desc then node asc.
+ * Same spec rules as `hk_engine_graph_analysis` (max_depth/limit ignored).
+ */
+char *hk_engine_graph_pagerank(struct HK_Engine *engine,
+                               const char *collection,
+                               const char *seeds_json,
+                               uint32_t direction,
+                               const char *edge_field,
+                               const char *via_edge,
+                               const char *filter_field,
+                               const char *filter_json,
+                               double damping,
+                               uintptr_t top);
+
+/**
+ * Seed-scoped N-hop subgraph (#198): `{"nodes":[{"collection","id","doc"}],
+ * "edges":[{"from","to"}]}` around one seed — same shape as
+ * `hk_engine_export_graph`, scoped by seed. `max_depth` = hop cap,
+ * `node_cap` 0 = unlimited. Missing seed = empty graph.
+ */
+char *hk_engine_subgraph(struct HK_Engine *engine,
+                         const char *collection,
+                         const char *seed_id,
+                         uint32_t max_depth,
+                         uint32_t direction,
+                         const char *edge_field,
+                         const char *via_edge,
+                         const char *filter_field,
+                         const char *filter_json,
+                         uintptr_t node_cap);
+
+/**
+ * Hybrid retrieval (#193): FTS (sparse) + vector KNN (dense) fused with
+ * Reciprocal Rank Fusion. Rows: `{"id", "score" (fused), "doc"}` sorted
+ * score desc then id asc, truncated to `k`. `rrf_k` 0 = default 60.
+ * Unindexed either side = the other side's ranking (fail-closed).
+ */
+char *hk_engine_hybrid_search(struct HK_Engine *engine,
+                              const char *collection,
+                              const char *text_field,
+                              const char *text_query,
+                              const char *vec_field,
+                              const float *vec_ptr,
+                              uintptr_t vec_len,
+                              uintptr_t k,
+                              uintptr_t rrf_k);
 
 /**
  * Register an edge collection (issue #53, Phase B): tracks it for
