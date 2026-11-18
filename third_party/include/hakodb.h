@@ -128,6 +128,22 @@ extern "C" {
 
 struct HK_Engine *hk_engine_open(const char *path);
 
+/**
+ * #217 P1 mirror: exclusive open — refuses (null + last_error naming the
+ * conflict) when the data dir is already held by another HakoDB instance
+ * (cross-process AND cross-handle in-process). Same advisory lock + config
+ * defaults as `hk_engine_open` otherwise.
+ */
+struct HK_Engine *hk_engine_open_exclusive(const char *path);
+
+/**
+ * #217 P2 mirror: one idempotent boot-time index declaration. `schema_json`
+ * = `{"fts":[[col,field],...],"vector":[[col,field,dim,metric_u32],...],
+ * "tracked":[col,...]}` (any key optional; `[]`/`null` treated as empty).
+ * Returns 0 on success (declared-or-existing), -1 on error.
+ */
+int32_t hk_engine_ensure_indexes(struct HK_Engine *engine, const char *schema_json);
+
 bool hk_engine_is_indexes_ready(struct HK_Engine *engine);
 
 /**
@@ -890,6 +906,19 @@ char *hk_engine_find_paths(struct HK_Engine *engine,
                            uintptr_t k);
 
 /**
+ * Hit-count BFS (#217 P0-C): the same walk as `hk_engine_find_paths` with
+ * the per-hit doc fetch + JSON render skipped — the bench walk/render
+ * split rides this. Returns the hit count, or -1 on error.
+ */
+int64_t hk_engine_find_paths_count(struct HK_Engine *engine,
+                                   const char *collection,
+                                   const char *doc_id,
+                                   uint32_t direction,
+                                   const char *edge_field,
+                                   uintptr_t max_depth,
+                                   uintptr_t k);
+
+/**
  * Filtered graph BFS (#156 Phase C): like `hk_engine_find_paths` plus a
  * node predicate — `filter_field` + `filter_json` (a single JSON value,
  * e.g. `"5"`, `true`, `"a"`) keep only nodes whose field equals it, and
@@ -1101,6 +1130,24 @@ char *hk_engine_subgraph(struct HK_Engine *engine,
                          uintptr_t node_cap);
 
 /**
+ * #217 P0-B mirror: `hk_engine_subgraph` with node-doc field projection.
+ * `fields_json` = JSON array of field names to KEEP on every node doc
+ * (fields that do not exist on a doc stay absent — decode_projected rule);
+ * `null`/`[]` = no projection, byte-identical to `hk_engine_subgraph`.
+ */
+char *hk_engine_subgraph_json_projected(struct HK_Engine *engine,
+                                        const char *collection,
+                                        const char *seed_id,
+                                        uint32_t max_depth,
+                                        uint32_t direction,
+                                        const char *edge_field,
+                                        const char *via_edge,
+                                        const char *filter_field,
+                                        const char *filter_json,
+                                        uintptr_t node_cap,
+                                        const char *fields_json);
+
+/**
  * Hybrid retrieval (#193): FTS (sparse) + vector KNN (dense) fused with
  * Reciprocal Rank Fusion. Rows: `{"id", "score" (fused), "doc"}` sorted
  * score desc then id asc, truncated to `k`. `rrf_k` 0 = default 60.
@@ -1115,6 +1162,42 @@ char *hk_engine_hybrid_search(struct HK_Engine *engine,
                               uintptr_t vec_len,
                               uintptr_t k,
                               uintptr_t rrf_k);
+
+/**
+ * #217 P0-A mirror: scored vector KNN with admission filters
+ * (`find_near_scored_filtered`). `max_distance`: NaN or <= 0 = no cap,
+ * otherwise a hard cap on the returned distance (metric-dependent: lower
+ * is closer on every metric). `filters_json` = same grammar as
+ * `hk_engine_hybrid_search_filtered`; `null` = no filters (pure scored
+ * KNN). Output rows: `[{id, score, doc}, ...]` — `score` is the raw
+ * distance (lower = better), NOT RRF-fused.
+ */
+char *hk_engine_find_near_scored_filtered(struct HK_Engine *engine,
+                                          const char *collection,
+                                          const char *field,
+                                          const float *vec_ptr,
+                                          uintptr_t vec_len,
+                                          uintptr_t k,
+                                          double max_distance,
+                                          const char *filters_json);
+
+/**
+ * #217 P0-A mirror: `hk_engine_hybrid_search` plus admission filters.
+ * `filters_json` = JSON array of `{field, op, value}` (same grammar as the
+ * `filters` argument on `hk_engine_query*`); `null` = no filters, which
+ * makes this byte-identical to `hk_engine_hybrid_search`. Filters apply
+ * BEFORE rank truncation on both sides.
+ */
+char *hk_engine_hybrid_search_filtered(struct HK_Engine *engine,
+                                       const char *collection,
+                                       const char *text_field,
+                                       const char *text_query,
+                                       const char *vec_field,
+                                       const float *vec_ptr,
+                                       uintptr_t vec_len,
+                                       uintptr_t k,
+                                       uintptr_t rrf_k,
+                                       const char *filters_json);
 
 /**
  * Register an edge collection (issue #53, Phase B): tracks it for
