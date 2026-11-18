@@ -133,6 +133,38 @@ func Open(path string) (*Engine, error) {
 	return &Engine{ptr: ptr}, nil
 }
 
+// OpenExclusive is the v0.21.0 (#217 wave) exclusive open: it refuses
+// (with a loud error naming the conflict) when the data dir is already
+// held by another HakoDB instance — cross-process AND cross-handle
+// in-process. The advisory lock releases when the returned Engine is
+// closed. Use this wherever two writable engines on one data dir would
+// be a bug (the plain Open keeps legacy caller-owned semantics).
+func OpenExclusive(path string) (*Engine, error) {
+	cp, free := cString(path)
+	defer free()
+	ptr := C.hk_engine_open_exclusive(cp)
+	if ptr == nil {
+		return nil, fmt.Errorf("hk_engine_open_exclusive failed: %s", lastError())
+	}
+	return &Engine{ptr: ptr}, nil
+}
+
+// EnsureIndexes declares the whole boot schema in ONE idempotent call,
+// before the first write. schemaJSON =
+// {"fts":[[col,field]...],"vector":[[col,field,dim,metric]...],
+// "tracked":[col...]}; metric 0=cosine 1=l2 2=inner_product; any key
+// optional. Re-declaring an existing schema is a cheap no-op that must
+// not wipe populated indexes (the pre-0.21.0 re-create behavior).
+func (e *Engine) EnsureIndexes(schemaJSON string) error {
+	cs, fs := cString(schemaJSON)
+	defer fs()
+	out := C.hk_engine_ensure_indexes(e.ptr, cs)
+	if out != 0 {
+		return fmt.Errorf("hk_engine_ensure_indexes failed: %s", lastError())
+	}
+	return nil
+}
+
 func OpenWithConfig(path string, cfg *Config) (*Engine, error) {
 	if cfg == nil || cfg.ptr == nil {
 		return nil, errors.New("config is nil")
@@ -1219,6 +1251,34 @@ func (e *Engine) Subgraph(collection, seedID string, maxDepth uint32, direction 
 	return out, nil
 }
 
+// SubgraphProjected is v0.21.0 (#217 wave): Subgraph with a node-doc
+// field projection. fieldsJSON = '["name",...]' keep-list (fields that
+// do not exist stay absent); "" = legacy full output, byte-identical to
+// Subgraph. Raw blobs (e.g. embeddings) must not reach graph clients.
+func (e *Engine) SubgraphProjected(collection, seedID string, maxDepth uint32, direction TraverseDirection, edge, via, nodeFilterField, nodeFilterJSON string, nodeCap int, fieldsJSON string) (string, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(seedID)
+	defer fc()
+	defer fi()
+	ce, fe := optCString(edge)
+	cv, fv := optCString(via)
+	cnf, fnf := optCString(nodeFilterField)
+	cnj, fnj := optCString(nodeFilterJSON)
+	cfd, ffd := optCString(fieldsJSON)
+	defer fe()
+	defer fv()
+	defer fnf()
+	defer fnj()
+	defer ffd()
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_subgraph_json_projected(e.ptr, cc, ci, C.uint32_t(maxDepth), C.uint32_t(direction), ce, cv, cnf, cnj, C.uintptr_t(nodeCap), cfd)
+	})
+	if err != nil {
+		return "", fmt.Errorf("hk_engine_subgraph_json_projected failed: %w", err)
+	}
+	return out, nil
+}
+
 // HybridSearch fuses the collection's FTS (sparse) and KNN (dense)
 // rankings with Reciprocal Rank Fusion. Rows {id, score (fused, desc),
 // doc}; rrfK 0 = engine default 60. Unindexed either side = the other
@@ -1245,6 +1305,66 @@ func (e *Engine) HybridSearch(collection, textField, textQuery, vecField string,
 	var hits []NearHit
 	if err := json.Unmarshal([]byte(out), &hits); err != nil {
 		return nil, fmt.Errorf("hk_engine_hybrid_search decode: %w", err)
+	}
+	return hits, nil
+}
+
+// HybridSearchFiltered is v0.21.0 (#217 wave): HybridSearch with
+// admission filters. filtersJSON = '[{"field","op","value"}...]' with
+// lowercase ops (contains, eq, ...); "" = no filters (byte-identical to
+// HybridSearch). Filters apply BEFORE rank truncation on both sides.
+func (e *Engine) HybridSearchFiltered(collection, textField, textQuery, vecField string, query []float32, k, rrfK int, filtersJSON string) ([]NearHit, error) {
+	cc, fc := cString(collection)
+	ctf, ftf := cString(textField)
+	ctq, ftq := cString(textQuery)
+	cvf, ffv := cString(vecField)
+	cfl, ffl := optCString(filtersJSON)
+	defer fc()
+	defer ftf()
+	defer ftq()
+	defer ffv()
+	defer ffl()
+	var qptr *C.float
+	if len(query) > 0 {
+		qptr = (*C.float)(unsafe.Pointer(&query[0]))
+	}
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_hybrid_search_filtered(e.ptr, cc, ctf, ctq, cvf, qptr, C.uintptr_t(len(query)), C.uintptr_t(k), C.uintptr_t(rrfK), cfl)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_hybrid_search_filtered failed: %w", err)
+	}
+	var hits []NearHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_hybrid_search_filtered decode: %w", err)
+	}
+	return hits, nil
+}
+
+// FindNearScoredFiltered is v0.21.0 (#217 wave): scored vector KNN with
+// admission filters. Rows {id, score (raw distance, lower = better),
+// doc}. maxDistance NaN or <= 0 = no cap. filtersJSON same grammar as
+// HybridSearchFiltered; "" = no filters.
+func (e *Engine) FindNearScoredFiltered(collection, vecField string, query []float32, k int, maxDistance float64, filtersJSON string) ([]NearHit, error) {
+	cc, fc := cString(collection)
+	cvf, ffv := cString(vecField)
+	cfl, ffl := optCString(filtersJSON)
+	defer fc()
+	defer ffv()
+	defer ffl()
+	var qptr *C.float
+	if len(query) > 0 {
+		qptr = (*C.float)(unsafe.Pointer(&query[0]))
+	}
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_engine_find_near_scored_filtered(e.ptr, cc, cvf, qptr, C.uintptr_t(len(query)), C.uintptr_t(k), C.double(maxDistance), cfl)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hk_engine_find_near_scored_filtered failed: %w", err)
+	}
+	var hits []NearHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		return nil, fmt.Errorf("hk_engine_find_near_scored_filtered decode: %w", err)
 	}
 	return hits, nil
 }
