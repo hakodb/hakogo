@@ -61,6 +61,11 @@ typedef struct HK_Array HK_Array;
 
 typedef struct HK_Batch HK_Batch;
 
+/**
+ * Cooperative cancellation handle for `hk_query_execute_with_cancel`.
+ */
+typedef struct HK_Cancel HK_Cancel;
+
 typedef struct HK_CloudSync HK_CloudSync;
 
 typedef struct HK_Config HK_Config;
@@ -539,6 +544,16 @@ int32_t hk_query_offset(struct HK_Query *query, uintptr_t offset);
 int32_t hk_query_select_field(struct HK_Query *query, const char *field);
 
 char *hk_query_execute(struct HK_Engine *engine, const struct HK_Query *query);
+
+char *hk_query_execute_with_cancel(struct HK_Engine *engine,
+                                   const struct HK_Query *query,
+                                   struct HK_Cancel *cancel);
+
+struct HK_Cancel *hk_cancel_new(void);
+
+void hk_cancel(struct HK_Cancel *cancel);
+
+void hk_cancel_free(struct HK_Cancel *cancel);
 
 /**
  * Query rows as one JSON array string, emitted from pinned bytes (no owned
