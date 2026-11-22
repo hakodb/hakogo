@@ -47,6 +47,7 @@ type (
 	Doc          struct{ ptr *C.HK_Doc }
 	Array        struct{ ptr *C.HK_Array }
 	Query        struct{ ptr *C.HK_Query }
+	Cancel       struct{ ptr *C.HK_Cancel }
 	Batch        struct{ ptr *C.HK_Batch }
 	Transaction  struct{ ptr *C.HK_Transaction }
 	NetSyncer    struct{ ptr *C.HK_NetSyncer }
@@ -989,6 +990,44 @@ func (e *Engine) CreateEdgeIndex(collection string) error {
 // direction, bad depth, untracked incoming) surfaces as an error via
 // hk_last_error; a missing anchor returns an empty slice (fail-closed).
 // Edge "" means any ref field (nil would too — empty is explicit).
+// NewCancel creates a cooperative cancellation handle (hakodb 0.21.7).
+func NewCancel() *Cancel {
+	return &Cancel{ptr: C.hk_cancel_new()}
+}
+
+// Cancel requests cancellation; aborted queries return an error.
+func (c *Cancel) Cancel() { C.hk_cancel(c.ptr) }
+
+// Free releases the cancellation handle.
+func (c *Cancel) Free() { C.hk_cancel_free(c.ptr) }
+
+// QueryJSONWithCancel runs a query with an explicit cancellation handle.
+// A cancelled query returns an error (the engine sets last_error).
+func (e *Engine) QueryJSONWithCancel(q *Query, c *Cancel) (string, error) {
+	out, err := ownedCStringJSON(func() *C.char {
+		return C.hk_query_execute_with_cancel(e.ptr, q.ptr, c.ptr)
+	})
+	if err != nil {
+		return "", fmt.Errorf("hk_query_execute_with_cancel failed: %w", err)
+	}
+	return out, nil
+}
+
+// FindPathsCount returns the number of BFS hits without materialising them.
+func (e *Engine) FindPathsCount(collection, docID string, direction TraverseDirection, edge string, maxDepth, k int) (int64, error) {
+	cc, fc := cString(collection)
+	ci, fi := cString(docID)
+	ce, fe := optCString(edge)
+	defer fc()
+	defer fi()
+	defer fe()
+	n := int64(C.hk_engine_find_paths_count(e.ptr, cc, ci, C.uint32_t(direction), ce, C.uintptr_t(maxDepth), C.uintptr_t(k)))
+	if n < 0 {
+		return 0, errors.New("hk_engine_find_paths_count failed")
+	}
+	return n, nil
+}
+
 func (e *Engine) FindPaths(collection, docID string, direction TraverseDirection, edge string, maxDepth, k int) ([]PathHit, error) {
 	cc, fc := cString(collection)
 	ci, fi := cString(docID)
