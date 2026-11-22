@@ -6,6 +6,7 @@ package hako
 #include <stdlib.h>
 #include <stdint.h>
 #include "hakodb.h"
+extern int hk_query_reset(struct HK_Query* query, const char* collection); // hakodb >= 0.21.8
 
 extern void hako_watch_bridge(char* collection, char* path, int32_t kind, void* user_data);
 static inline void hako_watch_bridge_const(const char* collection, const char* path, int32_t kind, void* user_data) {
@@ -198,6 +199,18 @@ func (c *Config) Free() {
 func (c *Config) SetDurability(mode DurabilityMode) {
 	C.hk_config_set_durability(c.ptr, C.int32_t(mode))
 }
+
+// Reset reuses this query handle for a new query in `collection` (hakodb 0.21.8).
+// Forgetting to reset between executions leaves the previous predicates in place.
+func (q *Query) Reset(collection string) error {
+	cc, free := cString(collection)
+	defer free()
+	if rc := C.hk_query_reset(q.ptr, cc); rc != 0 {
+		return errors.New("hk_query_reset failed: " + lastError())
+	}
+	return nil
+}
+
 func (c *Config) SetQueryWorkers(count uintptr) {
 	C.hk_config_set_query_workers(c.ptr, C.uintptr_t(count))
 }
