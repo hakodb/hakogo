@@ -446,6 +446,12 @@ int32_t hk_batch_commit(struct HK_Engine *engine, struct HK_Batch *batch);
 
 struct HK_Query *hk_query_new(const char *collection);
 
+/**
+ * #250: reuse an existing query handle by resetting it to a fresh Query
+ * for `collection`. Avoids query_new/query_free per request in SDK pools.
+ */
+int32_t hk_query_reset(struct HK_Query *query, const char *collection);
+
 void hk_query_free(struct HK_Query *query);
 
 int32_t hk_query_where_eq_str(struct HK_Query *query, const char *field, const char *value);
@@ -543,8 +549,27 @@ int32_t hk_query_offset(struct HK_Query *query, uintptr_t offset);
 
 int32_t hk_query_select_field(struct HK_Query *query, const char *field);
 
+/**
+ * Canonical execution entry point: same JSON output as `hk_query_execute`,
+ * with an optional `HK_Cancel*` (`NULL` means no cancellation). New callers
+ * should use this; `hk_query_execute` and `hk_query_execute_with_cancel`
+ * remain as compatibility wrappers. Free with `hk_string_free`.
+ * See `docs/ffi-query-lanes.md`.
+ */
+char *hk_query_execute_ex(struct HK_Engine *engine,
+                          const struct HK_Query *query,
+                          struct HK_Cancel *cancel);
+
+/**
+ * Legacy JSON executor: fully decodes each `HakoDoc` before serializing.
+ * Deprecated in favour of `hk_query_execute_ex`; see `docs/ffi-query-lanes.md`.
+ */
 char *hk_query_execute(struct HK_Engine *engine, const struct HK_Query *query);
 
+/**
+ * Legacy cancellable JSON executor, kept as a compatibility wrapper.
+ * Deprecated in favour of `hk_query_execute_ex` (which accepts `NULL`).
+ */
 char *hk_query_execute_with_cancel(struct HK_Engine *engine,
                                    const struct HK_Query *query,
                                    struct HK_Cancel *cancel);
@@ -556,10 +581,11 @@ void hk_cancel(struct HK_Cancel *cancel);
 void hk_cancel_free(struct HK_Cancel *cancel);
 
 /**
- * Query rows as one JSON array string, emitted from pinned bytes (no owned
- * `HakoDoc`). Output matches `hk_query_execute`; projections reuse that
- * path because the projected executor has its own field shape. Caller
- * frees with `hk_string_free`.
+ * JSON egress lane: rows as one JSON array string emitted from pinned
+ * bytes (no owned `HakoDoc`). Output matches `hk_query_execute`, but the
+ * cost is lower. Projections fall back to `hk_query_execute` because the
+ * projected executor has its own field shape. Free with `hk_string_free`.
+ * This is the SDK `get()`/`getJson()` path, not what `benchmark.cpp` times.
  */
 char *hk_query_execute_json(struct HK_Engine *engine, const struct HK_Query *query);
 
@@ -570,6 +596,12 @@ char *hk_query_execute_json(struct HK_Engine *engine, const struct HK_Query *que
  */
 char *hk_query_explain(struct HK_Engine *engine, const struct HK_Query *query);
 
+/**
+ * Execute a query into `HK_ResultSet*` of borrowed `HK_Doc` handles
+ * (zero-copy row refs, no JSON). Read rows with `hk_result_set_get_doc`
+ * and release with `hk_result_set_free`; never `hk_doc_free` a borrowed
+ * handle. This is the lane `benchmark.cpp` measures.
+ */
 struct HK_ResultSet *hk_query_execute_to_handles(struct HK_Engine *engine,
                                                  const struct HK_Query *query);
 
@@ -579,6 +611,11 @@ struct HK_Doc *hk_result_set_get_doc(struct HK_ResultSet *results, uintptr_t ind
 
 void hk_result_set_free(struct HK_ResultSet *results);
 
+/**
+ * Execute into `HK_RawResultSet*` of pinned storage bytes: no decode, no
+ * field interning. Only for index-satisfied filters/ordering; otherwise
+ * use `hk_query_execute_to_handles`. Page with `hk_query_start_after_raw`.
+ */
 struct HK_RawResultSet *hk_query_execute_raw(struct HK_Engine *engine,
                                              const struct HK_Query *query);
 
