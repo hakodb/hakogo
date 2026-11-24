@@ -1018,10 +1018,10 @@ func (c *Cancel) Free() { C.hk_cancel_free(c.ptr) }
 // A cancelled query returns an error (the engine sets last_error).
 func (e *Engine) QueryJSONWithCancel(q *Query, c *Cancel) (string, error) {
 	out, err := ownedCStringJSON(func() *C.char {
-		return C.hk_query_execute_with_cancel(e.ptr, q.ptr, c.ptr)
+		return C.hk_query_execute_ex(e.ptr, q.ptr, c.ptr)
 	})
 	if err != nil {
-		return "", fmt.Errorf("hk_query_execute_with_cancel failed: %w", err)
+		return "", fmt.Errorf("hk_query_execute_ex failed: %w", err)
 	}
 	return out, nil
 }
@@ -1795,7 +1795,7 @@ func (q *Query) AggregateMax(field string) error {
 	return checkStatus("hk_query_aggregate_max", C.hk_query_aggregate_max(q.ptr, cf))
 }
 func (e *Engine) ExecuteQuery(q *Query) (string, error) {
-	return ownedCStringJSON(func() *C.char { return C.hk_query_execute(e.ptr, q.ptr) })
+	return ownedCStringJSON(func() *C.char { return C.hk_query_execute_ex(e.ptr, q.ptr, nil) })
 }
 
 // ExecuteQueryJSON runs the query and serializes the rows from pinned bytes
