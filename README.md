@@ -78,3 +78,31 @@ sync degradation against `third_party/lib` (add it to `PATH` /
 ```sh
 go run ./examples/demo
 ```
+
+## API guidance: query and write paths
+
+Consumers should not have to guess which execution or write entry point to use. The core exposes one canonical executor plus advisory-deprecated wrappers and several materialization lanes with different costs.
+
+### Execution lanes
+
+| Lane | Returns | Use when |
+|---|---|---|
+| canonical executor (`hk_query_execute_ex` / SDK default) | JSON documents for an application | ordinary API calls |
+| JSON egress (`hk_query_execute_json`) | JSON from pinned bytes, no owned document | wire/egress output |
+| handles (`hk_query_execute_to_handles`) | borrowed document handles | engine throughput, caller reads selected fields |
+| raw (`hk_query_execute_raw`) | pinned storage bytes | index-satisfied scans, zero decode |
+| aggregation / explain | aggregate values or plan report | tuning and aggregate-only queries |
+
+Do not compare a JSON-document lane with an engine-only lane and call it the same benchmark. Mark lanes without an equivalent in another engine as not applicable.
+
+### In this repository
+
+- ExecuteEx/ExecuteJSON/ToHandles/Raw decision table
+- InsertJSON and batch write helpers
+- config durability and quiescence
+- ownership and free helpers
+
+### Further reading
+
+- Core decision table: https://github.com/hakodb/hakodb/blob/main/docs/ffi-query-lanes.md
+- Manual C ABI chapter: https://hakodb.github.io/manual/sdk-c-abi.html
